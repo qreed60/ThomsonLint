@@ -22,6 +22,9 @@ class TopologyPaths:
     def core(self, suffix: str) -> Path:
         return self.repo_root / "exports" / f"{self.project}-{suffix}"
 
+    def post_conversion(self) -> Path:
+        return self.repo_root / self.project / "post_conversion"
+
     def stage_dir(self, phase_id: str) -> Path:
         return self.run_dir / phase_id
 
@@ -50,6 +53,82 @@ def _strict(paths: TopologyPaths) -> list[str]:
     return ["--strict"] if paths.strict else []
 
 
+def _source(paths: TopologyPaths, filename: str) -> Path:
+    candidates: list[Path] = []
+    if paths.fixtures_dir:
+        candidates.extend([
+            paths.fixtures_dir / filename,
+            paths.fixtures_dir / "post_conversion" / filename,
+        ])
+    candidates.extend([
+        paths.run_dir / "pre01_locate_post_conversion_exports" / filename,
+        paths.post_conversion() / filename,
+        paths.repo_root / "exports" / paths.project / filename,
+        paths.repo_root / "exports" / filename,
+        paths.repo_root / filename,
+    ])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return paths.post_conversion() / filename
+
+
+def _bom(paths: TopologyPaths) -> Path:
+    return _source(paths, f"{paths.project}-bom.json")
+
+
+def _schematic(paths: TopologyPaths) -> Path:
+    return _source(paths, f"{paths.project}-thomson-export-sch.json")
+
+
+def _board(paths: TopologyPaths) -> Path:
+    return _source(paths, f"{paths.project}-thomson-export-brd.json")
+
+
+def _stack(paths: TopologyPaths) -> Path:
+    return _source(paths, f"{paths.project}-thomson-export-stack.json")
+
+
+def _conversion_report(paths: TopologyPaths) -> Path:
+    return _source(paths, f"{paths.project}-conversion-report.json")
+
+
+def _post_conversion_index(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre01_locate_post_conversion_exports", "post-conversion-source-index.json")
+
+
+def _topology_map(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre02_topology_map", "topology-map.json")
+
+
+def _power_topology(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre02_topology_map", "power-topology.json")
+
+
+def _topology_roles(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre03_topology_role_resolution", "topology-roles.json")
+
+
+def _rail_relationships(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre04_rail_relationships", "rail-relationships.json")
+
+
+def _copper_association(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre05_copper_net_association", "copper-net-association.json")
+
+
+def _branch_topology(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre06_branch_topology", "branch-topology.json")
+
+
+def _geometry_review(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre07_topology_geometry_review", "topology-geometry-review.json")
+
+
+def _branch_topology_enriched(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre08_branch_topology_enrichment", "branch-topology-enriched.json")
+
+
 def _core_current(paths: TopologyPaths) -> Path:
     return paths.stage_file("pr19_current_model_ingest", "current-models-normalized.json")
 
@@ -68,7 +147,7 @@ def _readiness(paths: TopologyPaths) -> Path:
 
 def _missing_manifest(paths: TopologyPaths) -> Path:
     fixture = paths.fixtures_dir / "missing-data-manifest.json" if paths.fixtures_dir else None
-    return fixture if fixture and fixture.exists() else paths.core("missing-data-manifest.json")
+    return fixture if fixture and fixture.exists() else paths.stage_file("pre09_missing_data_manifest_or_readiness_seed", "missing-data-manifest.json")
 
 
 def _packet_dir(paths: TopologyPaths) -> Path:
@@ -119,19 +198,158 @@ def _candidate_core_ingested_dir(paths: TopologyPaths) -> Path:
     return paths.stage_dir("pr36_ai_candidate_core_input_ingest")
 
 
+def _cmd_pre02(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "topology_builder.py"),
+        "--project",
+        paths.project,
+        "--schematic",
+        str(_schematic(paths)),
+        "--board",
+        str(_board(paths)),
+        "--stackup",
+        str(_stack(paths)),
+        "--bom",
+        str(_bom(paths)),
+        "--out",
+        str(_topology_map(paths)),
+        "--power-out",
+        str(_power_topology(paths)),
+        *_strict(paths),
+    ]
+
+
+def _cmd_pre03(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "topology_role_resolve.py"),
+        "--project",
+        paths.project,
+        "--topology",
+        str(_topology_map(paths)),
+        "--schematic",
+        str(_schematic(paths)),
+        "--out",
+        str(_topology_roles(paths)),
+        *_strict(paths),
+    ]
+
+
+def _cmd_pre04(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "rail_relationship_extract.py"),
+        "--project",
+        paths.project,
+        "--role-resolution",
+        str(_topology_roles(paths)),
+        "--topology",
+        str(_topology_map(paths)),
+        "--schematic",
+        str(_schematic(paths)),
+        "--out",
+        str(_rail_relationships(paths)),
+    ]
+
+
+def _cmd_pre05(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "board_copper_associate.py"),
+        "--project",
+        paths.project,
+        "--board",
+        str(_board(paths)),
+        "--stackup",
+        str(_stack(paths)),
+        "--topology",
+        str(_topology_map(paths)),
+        "--out",
+        str(_copper_association(paths)),
+        *_strict(paths),
+    ]
+
+
+def _cmd_pre06(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "branch_topology_build.py"),
+        "--project",
+        paths.project,
+        "--topology",
+        str(_topology_map(paths)),
+        "--copper-association",
+        str(_copper_association(paths)),
+        "--out",
+        str(_branch_topology(paths)),
+        *_strict(paths),
+    ]
+
+
+def _cmd_pre07(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "topology_geometry_review.py"),
+        "--project",
+        paths.project,
+        "--topology",
+        str(_topology_map(paths)),
+        "--copper-association",
+        str(_copper_association(paths)),
+        "--branch-topology",
+        str(_branch_topology(paths)),
+        "--stackup",
+        str(_stack(paths)),
+        "--out",
+        str(_geometry_review(paths)),
+        *_strict(paths),
+    ]
+
+
+def _cmd_pre08(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "branch_topology_enrich.py"),
+        "--project",
+        paths.project,
+        "--branch-topology",
+        str(_branch_topology(paths)),
+        "--role-resolution",
+        str(_topology_roles(paths)),
+        "--rail-relationships",
+        str(_rail_relationships(paths)),
+        "--geometry-review",
+        str(_geometry_review(paths)),
+        "--out",
+        str(_branch_topology_enriched(paths)),
+    ]
+
+
+def _cmd_pre09(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "missing_data_manifest.py"),
+        "--project",
+        paths.project,
+        "--calculation-readiness",
+        str(_readiness(paths)),
+        "--branch-topology-enriched",
+        str(_branch_topology_enriched(paths)),
+        "--role-resolution",
+        str(_topology_roles(paths)),
+        "--rail-relationships",
+        str(_rail_relationships(paths)),
+        "--out",
+        str(_missing_manifest(paths)),
+    ]
+
+
 def _cmd_pr16(paths: TopologyPaths) -> list[str]:
     return [
         *_py(paths, "calculation_readiness_inventory.py"),
         "--project",
         paths.project,
         "--branch-topology-enriched",
-        str(paths.core("branch-topology-enriched.json")),
+        str(_branch_topology_enriched(paths)),
         "--role-resolution",
-        str(paths.core("topology-roles.json")),
+        str(_topology_roles(paths)),
         "--rail-relationships",
-        str(paths.core("rail-relationships.json")),
+        str(_rail_relationships(paths)),
         "--geometry-review",
-        str(paths.core("topology-geometry-review.json")),
+        str(_geometry_review(paths)),
         "--out",
         str(_readiness(paths)),
     ]
@@ -143,7 +361,7 @@ def _cmd_pr18(paths: TopologyPaths) -> list[str]:
         "--project",
         paths.project,
         "--geometry-review",
-        str(paths.core("topology-geometry-review.json")),
+        str(_geometry_review(paths)),
         "--calculation-readiness",
         str(_readiness(paths)),
         "--missing-data-manifest",
@@ -163,11 +381,11 @@ def _cmd_pr19(paths: TopologyPaths) -> list[str]:
         "--missing-data-manifest",
         str(_missing_manifest(paths)),
         "--branch-topology-enriched",
-        str(paths.core("branch-topology-enriched.json")),
+        str(_branch_topology_enriched(paths)),
         "--rail-relationships",
-        str(paths.core("rail-relationships.json")),
+        str(_rail_relationships(paths)),
         "--role-resolution",
-        str(paths.core("topology-roles.json")),
+        str(_topology_roles(paths)),
         "--out",
         str(_core_current(paths)),
     ]
@@ -181,11 +399,11 @@ def _cmd_pr20(paths: TopologyPaths) -> list[str]:
         "--current-models-normalized",
         str(_core_current(paths)),
         "--branch-topology-enriched",
-        str(paths.core("branch-topology-enriched.json")),
+        str(_branch_topology_enriched(paths)),
         "--rail-relationships",
-        str(paths.core("rail-relationships.json")),
+        str(_rail_relationships(paths)),
         "--role-resolution",
-        str(paths.core("topology-roles.json")),
+        str(_topology_roles(paths)),
         "--missing-data-manifest",
         str(_missing_manifest(paths)),
         "--calculation-readiness",
@@ -201,7 +419,7 @@ def _cmd_pr21(paths: TopologyPaths) -> list[str]:
         "--project",
         paths.project,
         "--geometry-review",
-        str(paths.core("topology-geometry-review.json")),
+        str(_geometry_review(paths)),
         "--calculation-readiness",
         str(_readiness(paths)),
         "--missing-data-manifest",
@@ -219,7 +437,7 @@ def _cmd_pr22(paths: TopologyPaths) -> list[str]:
         "--project",
         paths.project,
         "--geometry-review",
-        str(paths.core("topology-geometry-review.json")),
+        str(_geometry_review(paths)),
         "--calculation-readiness",
         str(_readiness(paths)),
         "--missing-data-manifest",
@@ -241,11 +459,11 @@ def _cmd_pr23(paths: TopologyPaths) -> list[str]:
         "--missing-data-manifest",
         str(_missing_manifest(paths)),
         "--branch-topology-enriched",
-        str(paths.core("branch-topology-enriched.json")),
+        str(_branch_topology_enriched(paths)),
         "--rail-relationships",
-        str(paths.core("rail-relationships.json")),
+        str(_rail_relationships(paths)),
         "--role-resolution",
-        str(paths.core("topology-roles.json")),
+        str(_topology_roles(paths)),
         "--out",
         str(_rating_models(paths)),
     ]
@@ -263,11 +481,11 @@ def _cmd_margin(paths: TopologyPaths, phase_id: str, filename: str) -> list[str]
         "--missing-data-manifest",
         str(_missing_manifest(paths)),
         "--branch-topology-enriched",
-        str(paths.core("branch-topology-enriched.json")),
+        str(_branch_topology_enriched(paths)),
         "--rail-relationships",
-        str(paths.core("rail-relationships.json")),
+        str(_rail_relationships(paths)),
         "--role-resolution",
-        str(paths.core("topology-roles.json")),
+        str(_topology_roles(paths)),
         "--out",
         str(paths.stage_file(phase_id, filename)),
     ]
@@ -287,11 +505,11 @@ def _cmd_pr26(paths: TopologyPaths) -> list[str]:
         "--phase-name",
         "AI packet generation",
         "--branch-topology-enriched",
-        str(paths.core("branch-topology-enriched.json")),
+        str(_branch_topology_enriched(paths)),
         "--rail-relationships",
-        str(paths.core("rail-relationships.json")),
+        str(_rail_relationships(paths)),
         "--role-resolution",
-        str(paths.core("topology-roles.json")),
+        str(_topology_roles(paths)),
     ]
 
 
@@ -464,13 +682,22 @@ def _cmd_pr37(paths: TopologyPaths) -> list[str]:
 
 
 TOPOLOGY_AI_PHASES: tuple[PhaseSpec, ...] = (
-    PhaseSpec("pr16_calculation_readiness", 16, "calculation readiness / missing-data inventory", "calculation_readiness_inventory.py", lambda p: [p.core("branch-topology-enriched.json")], lambda p: [_readiness(p)], _cmd_pr16, "PR16 calculation readiness and missing-data inventory."),
+    PhaseSpec("pre01_locate_post_conversion_exports", 0, "locate post-conversion exports", None, lambda p: [_bom(p), _schematic(p), _board(p)], lambda p: [_post_conversion_index(p)], lambda p: None, "Locate required post-conversion source exports and record optional source warnings.", "locate_post_conversion"),
+    PhaseSpec("pre02_topology_map", 0, "topology map", "topology_builder.py", lambda p: [_schematic(p), _board(p), _bom(p)], lambda p: [_topology_map(p), _power_topology(p)], _cmd_pre02, "Build topology map from post-conversion schematic, board, stack, and BOM exports."),
+    PhaseSpec("pre03_topology_role_resolution", 0, "topology role resolution", "topology_role_resolve.py", lambda p: [_topology_map(p), _schematic(p)], lambda p: [_topology_roles(p)], _cmd_pre03, "Resolve deterministic topology roles before PR16."),
+    PhaseSpec("pre04_rail_relationships", 0, "rail relationships", "rail_relationship_extract.py", lambda p: [_topology_roles(p)], lambda p: [_rail_relationships(p)], _cmd_pre04, "Extract deterministic rail relationships before PR16."),
+    PhaseSpec("pre05_copper_net_association", 0, "copper net association", "board_copper_associate.py", lambda p: [_board(p), _stack(p), _topology_map(p)], lambda p: [_copper_association(p)], _cmd_pre05, "Associate board copper objects with topology nets."),
+    PhaseSpec("pre06_branch_topology", 0, "branch topology", "branch_topology_build.py", lambda p: [_topology_map(p), _copper_association(p)], lambda p: [_branch_topology(p)], _cmd_pre06, "Build conservative branch topology candidates."),
+    PhaseSpec("pre07_topology_geometry_review", 0, "topology geometry review", "topology_geometry_review.py", lambda p: [_topology_map(p), _copper_association(p), _branch_topology(p), _stack(p)], lambda p: [_geometry_review(p)], _cmd_pre07, "Create topology-aware geometry review evidence."),
+    PhaseSpec("pre08_branch_topology_enrichment", 0, "branch topology enrichment", "branch_topology_enrich.py", lambda p: [_branch_topology(p), _topology_roles(p), _rail_relationships(p), _geometry_review(p)], lambda p: [_branch_topology_enriched(p)], _cmd_pre08, "Enrich branch topology with deterministic role, rail, and geometry context."),
+    PhaseSpec("pr16_calculation_readiness", 16, "calculation readiness / missing-data inventory", "calculation_readiness_inventory.py", lambda p: [_branch_topology_enriched(p), _topology_roles(p), _rail_relationships(p), _geometry_review(p)], lambda p: [_readiness(p)], _cmd_pr16, "PR16 calculation readiness and missing-data inventory."),
+    PhaseSpec("pre09_missing_data_manifest_or_readiness_seed", 0, "missing-data manifest from readiness", "missing_data_manifest.py", lambda p: [_readiness(p), _branch_topology_enriched(p), _topology_roles(p), _rail_relationships(p)], lambda p: [_missing_manifest(p)], _cmd_pre09, "Build missing-data manifest from PR16 readiness before PR18+ and PR26."),
     PhaseSpec("pr17_schema_available", 17, "schema availability check", None, lambda p: [p.repo_root / "schemas" / "calculation_readiness_schema.json", p.repo_root / "schemas" / "calculation_result_schema.json"], lambda p: [], lambda p: None, "PR17 checks schema availability only; it does not execute a command.", "schema_check"),
-    PhaseSpec("pr18_copper_calculation", 18, "copper calculations", "topology_copper_calculate.py", lambda p: [p.core("topology-geometry-review.json"), _readiness(p), _missing_manifest(p)], lambda p: [p.stage_file("pr18_copper_calculation", "topology-copper-calculations.json")], _cmd_pr18, "PR18 deterministic copper calculations."),
+    PhaseSpec("pr18_copper_calculation", 18, "copper calculations", "topology_copper_calculate.py", lambda p: [_geometry_review(p), _readiness(p), _missing_manifest(p)], lambda p: [p.stage_file("pr18_copper_calculation", "topology-copper-calculations.json")], _cmd_pr18, "PR18 deterministic copper calculations."),
     PhaseSpec("pr19_current_model_ingest", 19, "current model ingestion", "current_model_ingest.py", lambda p: [p.core("current-model.json"), _missing_manifest(p)], lambda p: [_core_current(p)], _cmd_pr19, "PR19 normalizes explicit current models."),
-    PhaseSpec("pr20_current_allocation", 20, "current allocation", "topology_current_allocate.py", lambda p: [_core_current(p), p.core("branch-topology-enriched.json"), _missing_manifest(p), _readiness(p)], lambda p: [_current_allocation(p)], _cmd_pr20, "PR20 allocates explicit normalized current to topology branches."),
-    PhaseSpec("pr21_copper_with_allocated_current", 21, "copper path using allocated currents", "topology_copper_calculate.py", lambda p: [p.core("topology-geometry-review.json"), _readiness(p), _missing_manifest(p), _current_allocation(p)], lambda p: [p.stage_file("pr21_copper_with_allocated_current", "topology-copper-with-allocated-current.json")], _cmd_pr21, "PR21 reruns copper calculation behavior with allocated currents."),
-    PhaseSpec("pr22_via_current_density", 22, "via current density", "topology_copper_calculate.py", lambda p: [p.core("topology-geometry-review.json"), _readiness(p), _missing_manifest(p), _current_allocation(p)], lambda p: [p.stage_file("pr22_via_current_density", "topology-via-current-density.json")], _cmd_pr22, "PR22 is copper/via current-density behavior, not margin behavior.", "copper_via"),
+    PhaseSpec("pr20_current_allocation", 20, "current allocation", "topology_current_allocate.py", lambda p: [_core_current(p), _branch_topology_enriched(p), _missing_manifest(p), _readiness(p)], lambda p: [_current_allocation(p)], _cmd_pr20, "PR20 allocates explicit normalized current to topology branches."),
+    PhaseSpec("pr21_copper_with_allocated_current", 21, "copper path using allocated currents", "topology_copper_calculate.py", lambda p: [_geometry_review(p), _readiness(p), _missing_manifest(p), _current_allocation(p)], lambda p: [p.stage_file("pr21_copper_with_allocated_current", "topology-copper-with-allocated-current.json")], _cmd_pr21, "PR21 reruns copper calculation behavior with allocated currents."),
+    PhaseSpec("pr22_via_current_density", 22, "via current density", "topology_copper_calculate.py", lambda p: [_geometry_review(p), _readiness(p), _missing_manifest(p), _current_allocation(p)], lambda p: [p.stage_file("pr22_via_current_density", "topology-via-current-density.json")], _cmd_pr22, "PR22 is copper/via current-density behavior, not margin behavior.", "copper_via"),
     PhaseSpec("pr23_rating_model_ingest", 23, "rating model ingestion", "rating_model_ingest.py", lambda p: [_core_current(p), _missing_manifest(p)], lambda p: [_rating_models(p)], _cmd_pr23, "PR23 normalizes explicit rating models before margin stages."),
     PhaseSpec("pr24_fuse_margin", 24, "fuse margin", "topology_margin_calculate.py", lambda p: [_current_allocation(p), _rating_models(p), _missing_manifest(p)], lambda p: [p.stage_file("pr24_fuse_margin", "topology-fuse-margin.json")], lambda p: _cmd_margin(p, "pr24_fuse_margin", "topology-fuse-margin.json"), "PR24 calculates margins using current allocation and rating models."),
     PhaseSpec("pr25_connector_pin_margin", 25, "connector pin current margin", "topology_margin_calculate.py", lambda p: [_current_allocation(p), _rating_models(p), _missing_manifest(p)], lambda p: [p.stage_file("pr25_connector_pin_margin", "topology-connector-pin-current-margin.json")], lambda p: _cmd_margin(p, "pr25_connector_pin_margin", "topology-connector-pin-current-margin.json"), "PR25 calculates connector pin current margins."),
@@ -491,12 +718,15 @@ TOPOLOGY_AI_PHASES: tuple[PhaseSpec, ...] = (
 
 PHASE_BY_ID = {phase.phase_id: phase for phase in TOPOLOGY_AI_PHASES}
 PHASE_BY_PR = {f"pr{phase.pr_number}": phase for phase in TOPOLOGY_AI_PHASES}
+PHASE_BY_PRE = {phase.phase_id.split("_", 1)[0]: phase for phase in TOPOLOGY_AI_PHASES if phase.phase_id.startswith("pre")}
 
 
 def resolve_phase_id(value: str) -> str:
     normalized = value.strip().lower()
     if normalized in PHASE_BY_PR:
         return PHASE_BY_PR[normalized].phase_id
+    if normalized in PHASE_BY_PRE:
+        return PHASE_BY_PRE[normalized].phase_id
     if normalized in PHASE_BY_ID:
         return normalized
     raise ValueError(f"unknown topology_ai phase id: {value}")
@@ -506,7 +736,7 @@ def selected_phases(start: str, end: str) -> list[PhaseSpec]:
     start_id = resolve_phase_id(start)
     end_id = resolve_phase_id(end)
     ids = [phase.phase_id for phase in TOPOLOGY_AI_PHASES]
-    start_index = ids.index(start_id)
+    start_index = 0 if start_id == "pr16_calculation_readiness" else ids.index(start_id)
     end_index = ids.index(end_id)
     if end_index < start_index:
         raise ValueError(f"end phase {end} comes before start phase {start}")

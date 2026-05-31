@@ -68,7 +68,7 @@
       "properties": {
         "workflow": { "enum": ["topology_ai"] },
         "phase_id": { "type": "string" },
-        "pr_number": { "type": "integer", "minimum": 16, "maximum": 37 },
+        "pr_number": { "type": "integer", "minimum": 0, "maximum": 37 },
         "script": { "type": ["string", "null"] },
         "command": { "type": "array", "items": { "type": "string" } },
         "status": { "enum": ["passed", "failed", "skipped", "blocked_missing_input", "not_applicable"] },

@@ -35,22 +35,22 @@ def stage_results(out_dir: Path) -> list[dict[str, Any]]:
     return read_json(out_dir / "phase-driver-stage-results.json")["stage_results"]
 
 
-def create_project_inputs(root: Path, project: str = "TestProject") -> None:
-    exports = root / "exports"
-    exports.mkdir(parents=True, exist_ok=True)
+def create_post_conversion_inputs(root: Path, project: str = "TestProject", *, stack: bool = True) -> Path:
+    post = root / project / "post_conversion"
+    post.mkdir(parents=True, exist_ok=True)
     for suffix in [
-        "branch-topology-enriched.json",
-        "topology-roles.json",
-        "rail-relationships.json",
-        "topology-geometry-review.json",
-        "current-model.json",
-        "missing-data-manifest.json",
+        "bom.json",
+        "thomson-export-sch.json",
+        "thomson-export-brd.json",
     ]:
-        (exports / f"{project}-{suffix}").write_text("{}", encoding="utf-8")
+        (post / f"{project}-{suffix}").write_text("{}", encoding="utf-8")
+    if stack:
+        (post / f"{project}-thomson-export-stack.json").write_text("{}", encoding="utf-8")
     schemas = root / "schemas"
-    schemas.mkdir()
+    schemas.mkdir(exist_ok=True)
     (schemas / "calculation_input_schema.json").write_text("{}", encoding="utf-8")
     (schemas / "calculation_result_schema.json").write_text("{}", encoding="utf-8")
+    return post
 
 
 def fake_completed(command: list[str], returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -62,6 +62,10 @@ def fake_run_creating_outputs(command: list[str], **_: Any) -> subprocess.Comple
         out = Path(command[command.index("--out") + 1])
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text("{}", encoding="utf-8")
+    if "--power-out" in command:
+        power = Path(command[command.index("--power-out") + 1])
+        power.parent.mkdir(parents=True, exist_ok=True)
+        power.write_text("{}", encoding="utf-8")
     if "--out-dir" in command:
         out_dir = Path(command[command.index("--out-dir") + 1])
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -106,7 +110,16 @@ def test_topology_ai_dry_run_order_and_no_subprocess(tmp_path: Path, monkeypatch
     out_dir = run_driver(tmp_path, "--start", "pr16", "--end", "pr37", "--dry-run")
     rows = stage_results(out_dir)
     assert [row["phase_id"] for row in rows] == [
+        "pre01_locate_post_conversion_exports",
+        "pre02_topology_map",
+        "pre03_topology_role_resolution",
+        "pre04_rail_relationships",
+        "pre05_copper_net_association",
+        "pre06_branch_topology",
+        "pre07_topology_geometry_review",
+        "pre08_branch_topology_enrichment",
         "pr16_calculation_readiness",
+        "pre09_missing_data_manifest_or_readiness_seed",
         "pr17_schema_available",
         "pr18_copper_calculation",
         "pr19_current_model_ingest",
@@ -129,23 +142,28 @@ def test_topology_ai_dry_run_order_and_no_subprocess(tmp_path: Path, monkeypatch
         "pr36_ai_candidate_core_input_ingest",
         "pr37_ai_candidate_normalized_review",
     ]
-    assert rows[1]["command"] == []
-    assert rows[1]["status"] == "not_applicable"
-    assert rows[6]["script"] == "topology_copper_calculate.py"
-    assert rows[6]["stage_kind"] == "copper_via"
-    assert rows[7]["phase_id"] == "pr23_rating_model_ingest"
-    assert rows[8]["script"] == "topology_margin_calculate.py"
-    assert rows[9]["script"] == "topology_margin_calculate.py"
-    assert "outputs/artifacts" in rows[14]["reason"]
+    assert rows[0]["command"] == []
+    assert rows[9]["script"] == "missing_data_manifest.py"
+    assert rows[10]["command"] == []
+    assert rows[10]["status"] == "not_applicable"
+    assert rows[15]["script"] == "topology_copper_calculate.py"
+    assert rows[15]["stage_kind"] == "copper_via"
+    assert rows[16]["phase_id"] == "pr23_rating_model_ingest"
+    assert rows[17]["script"] == "topology_margin_calculate.py"
+    assert rows[18]["script"] == "topology_margin_calculate.py"
+    assert "outputs/artifacts" in rows[23]["reason"]
 
 
 def test_missing_raw_ai_blocks_pr27_and_later_without_fabrication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_root = tmp_path / "repo"
-    create_project_inputs(fake_root)
+    create_post_conversion_inputs(fake_root)
     monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
     monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
     out_dir = tmp_path / "run"
-    result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--out-dir", str(out_dir), "--allow-existing-outputs"])
+    manifest = out_dir / "pre09_missing_data_manifest_or_readiness_seed" / "missing-data-manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+    result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--start", "pr26", "--end", "pr37", "--out-dir", str(out_dir), "--allow-existing-outputs"])
     assert result == 0
     rows = stage_results(out_dir)
     pr27 = next(row for row in rows if row["phase_id"] == "pr27_ai_extraction_validate")
@@ -169,7 +187,8 @@ def test_outputs_stay_under_workflow_run_dir_and_safety_flags(tmp_path: Path) ->
     assert manifest["ready_for_core_apply"] is False
     pr26_plus = [row for row in artifact_index["artifacts"] if row["pr_number"] >= 26]
     assert pr26_plus
-    assert all(row["inside_workflow_run_dir"] is True for row in pr26_plus)
+    assert all(row["inside_workflow_run_dir"] is True for row in artifact_index["artifacts"])
+    assert any(row["is_prerequisite_output"] for row in artifact_index["artifacts"])
 
 
 def test_qwen_vision_reporting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -202,6 +221,76 @@ def test_missing_project_inputs_block_without_crash(tmp_path: Path, monkeypatch:
     assert rows[0]["status"] == "blocked_missing_input"
     assert rows[0]["blocker_id"]
     assert read_json(out_dir / "phase-driver-blockers.json")["blockers"]
+
+
+def test_driver_locates_post_conversion_inputs_and_pr16_uses_run_dir_enriched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--start", "pre01", "--end", "pr16", "--out-dir", str(out_dir), "--allow-existing-outputs"])
+    assert result == 0
+    rows = stage_results(out_dir)
+    pre01 = rows[0]
+    assert pre01["status"] == "passed"
+    assert str(fake_root / "TestProject" / "post_conversion" / "TestProject-thomson-export-sch.json") in pre01["input_paths"]
+    pr16 = next(row for row in rows if row["phase_id"] == "pr16_calculation_readiness")
+    enriched = out_dir / "pre08_branch_topology_enrichment" / "branch-topology-enriched.json"
+    assert str(enriched) in pr16["command"]
+    assert "exports/TestProject-branch-topology-enriched.json" not in " ".join(pr16["command"])
+
+
+def test_missing_post_conversion_required_inputs_have_exact_blockers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    fake_root.mkdir()
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    out_dir = run_driver(tmp_path, "--start", "pre01", "--end", "pr16")
+    blockers = read_json(out_dir / "phase-driver-blockers.json")["blockers"]
+    missing = set(blockers[0]["missing_paths"])
+    assert str(fake_root / "TestProject" / "post_conversion" / "TestProject-bom.json") in missing
+    assert str(fake_root / "TestProject" / "post_conversion" / "TestProject-thomson-export-sch.json") in missing
+    assert str(fake_root / "TestProject" / "post_conversion" / "TestProject-thomson-export-brd.json") in missing
+
+
+def test_missing_optional_post_conversion_inputs_are_warnings_not_blockers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root, stack=False)
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--start", "pre01", "--end", "pre01", "--out-dir", str(out_dir), "--allow-existing-outputs"])
+    assert result == 0
+    rows = stage_results(out_dir)
+    assert rows[0]["status"] == "passed"
+    source_index = read_json(out_dir / "pre01_locate_post_conversion_exports" / "post-conversion-source-index.json")
+    assert source_index["warnings"]
+    assert read_json(out_dir / "phase-driver-blockers.json")["blockers"] == []
+
+
+def test_pr17_independent_when_pr16_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    fake_root.mkdir()
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    out_dir = run_driver(tmp_path, "--start", "pr16", "--end", "pr18")
+    rows = stage_results(out_dir)
+    pr17 = next(row for row in rows if row["phase_id"] == "pr17_schema_available")
+    pr18 = next(row for row in rows if row["phase_id"] == "pr18_copper_calculation")
+    assert pr17["status"] == "not_applicable"
+    assert pr18["status"] == "skipped"
+    assert pr18["blocker_id"] == rows[0]["blocker_id"]
+
+
+def test_downstream_pr18_blocks_on_missing_previous_stage_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--start", "pr18", "--end", "pr18", "--out-dir", str(out_dir), "--allow-existing-outputs"])
+    assert result == 0
+    rows = stage_results(out_dir)
+    assert rows[-1]["phase_id"] == "pr18_copper_calculation"
+    assert rows[-1]["status"] == "blocked_missing_input"
+    assert str(out_dir / "pr16_calculation_readiness" / "calculation-readiness-inventory.json") in rows[-1]["input_paths"]
 
 
 def test_stage_results_include_required_fields(tmp_path: Path) -> None:

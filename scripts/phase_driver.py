@@ -32,7 +32,7 @@ REQUIRED_OUTPUTS = (
     "phase-driver-blockers.json",
     "phase-driver-inspection-commands.md",
 )
-PR26_TO_PR37 = set(range(26, 38))
+ISOLATED_OUTPUT_PRS = set(range(26, 38))
 
 
 def utc_now() -> str:
@@ -153,11 +153,39 @@ def path_inside(path: Path, base: Path) -> bool:
 
 def assert_outputs_in_run_dir(results: list[dict[str, Any]], run_dir: Path) -> None:
     for result in results:
-        if result["pr_number"] not in PR26_TO_PR37:
-            continue
         for value in result["output_paths"]:
             if value and not path_inside(Path(value), run_dir):
-                raise ValueError(f"PR{result['pr_number']} output escapes workflow run directory: {value}")
+                raise ValueError(f"{result['phase_id']} output escapes workflow run directory: {value}")
+
+
+def write_post_conversion_index(paths: TopologyPaths, inputs: list[Path], output: Path) -> tuple[str, list[dict[str, Any]]]:
+    optional = [
+        paths.post_conversion() / f"{paths.project}-thomson-export-stack.json",
+        paths.post_conversion() / f"{paths.project}-conversion-report.json",
+    ]
+    image_count = len(list(paths.post_conversion().glob(f"{paths.project}-img-*.png"))) if paths.post_conversion().exists() else 0
+    warnings = [
+        {"path": str(path), "reason": "optional post-conversion input missing"}
+        for path in optional
+        if not path.exists()
+    ]
+    if image_count == 0:
+        warnings.append({"path": str(paths.post_conversion() / f"{paths.project}-img-*.png"), "reason": "optional image inputs missing"})
+    artifact = {
+        "artifact_type": "post_conversion_source_index",
+        "schema_version": "1.0",
+        "generated_at_utc": utc_now(),
+        "project": paths.project,
+        "post_conversion_dir": str(paths.post_conversion()),
+        "required_inputs": [{"path": str(path), "exists": path.exists()} for path in inputs],
+        "optional_inputs": [{"path": str(path), "exists": path.exists()} for path in optional],
+        "image_count": image_count,
+        "warnings": warnings,
+        "errors": [],
+    }
+    write_json(output, artifact)
+    reason = f"located post-conversion exports; optional_warning_count={len(warnings)}"
+    return reason, warnings
 
 
 def execute_topology_ai(args: argparse.Namespace) -> int:
@@ -205,21 +233,6 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
             )
             continue
 
-        if cascade_blocker_id:
-            results.append(
-                stage_record(
-                    phase,
-                    command=command,
-                    status="skipped",
-                    return_code=None,
-                    input_paths=inputs,
-                    output_paths=outputs,
-                    reason=f"skipped because {cascade_reason}",
-                    blocker_id=cascade_blocker_id,
-                )
-            )
-            continue
-
         if phase.stage_kind == "schema_check":
             missing = [path for path in inputs if not path.exists()]
             if missing:
@@ -249,6 +262,21 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
                         reason="schema_available; no command executed",
                     )
                 )
+            continue
+
+        if cascade_blocker_id:
+            results.append(
+                stage_record(
+                    phase,
+                    command=command,
+                    status="skipped",
+                    return_code=None,
+                    input_paths=inputs,
+                    output_paths=outputs,
+                    reason=f"skipped because {cascade_reason}",
+                    blocker_id=cascade_blocker_id,
+                )
+            )
             continue
 
         if phase.stage_kind == "ai_response_required" and not args.continue_with_existing_ai_artifacts:
@@ -307,6 +335,21 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
             )
             cascade_blocker_id = blocker_id
             cascade_reason = reason
+            continue
+
+        if phase.stage_kind == "locate_post_conversion":
+            reason, _warnings = write_post_conversion_index(paths, inputs, outputs[0])
+            results.append(
+                stage_record(
+                    phase,
+                    command=[],
+                    status="passed",
+                    return_code=None,
+                    input_paths=inputs,
+                    output_paths=outputs,
+                    reason=reason,
+                )
+            )
             continue
 
         for output in outputs:
@@ -404,6 +447,7 @@ def write_run_artifacts(
                 "path": path,
                 "exists": Path(path).exists(),
                 "inside_workflow_run_dir": path_inside(Path(path), out_dir),
+                "is_prerequisite_output": row["phase_id"].startswith("pre"),
             }
             for row in results
             for path in row["output_paths"]
@@ -458,6 +502,8 @@ def write_inspection_commands(path: Path, project: str, out_dir: Path, results: 
     for row in results:
         command = " ".join(row["command"]) if row["command"] else "(no command)"
         lines.extend([f"### {row['phase_id']}", "", "```bash", command, "```", ""])
+        for output in row["output_paths"]:
+            lines.extend(["```bash", f"python -m json.tool {output} | head -80", "```", ""])
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
