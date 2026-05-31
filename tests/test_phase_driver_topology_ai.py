@@ -62,6 +62,10 @@ def fake_run_creating_outputs(command: list[str], **_: Any) -> subprocess.Comple
         out = Path(command[command.index("--out") + 1])
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text("{}", encoding="utf-8")
+    if "--validate-out" in command:
+        validate_out = Path(command[command.index("--validate-out") + 1])
+        validate_out.parent.mkdir(parents=True, exist_ok=True)
+        validate_out.write_text("{}", encoding="utf-8")
     if "--power-out" in command:
         power = Path(command[command.index("--power-out") + 1])
         power.parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +252,77 @@ def test_outputs_stay_under_workflow_run_dir_and_safety_flags(tmp_path: Path) ->
     assert pr26_plus
     assert all(row["inside_workflow_run_dir"] is True for row in artifact_index["artifacts"])
     assert any(row["is_prerequisite_output"] for row in artifact_index["artifacts"])
+
+
+def test_pr33_uses_script_accepted_run_local_promotion_paths(tmp_path: Path) -> None:
+    out_dir = run_driver(tmp_path, "--start", "pr33", "--end", "pr34", "--dry-run")
+    rows = stage_results(out_dir)
+    pr33 = next(row for row in rows if row["phase_id"] == "pr33_ai_approval_decisions")
+    pr34 = next(row for row in rows if row["phase_id"] == "pr34_ai_promotion_apply_dry_run")
+    decisions = out_dir / "pr32_ai_promotion_plan" / "ai-approval-decisions.json"
+    validation = out_dir / "pr32_ai_promotion_plan" / "ai-approval-decision-validation.json"
+
+    assert pr33["command"][pr33["command"].index("--promotion-dir") + 1] == str(out_dir / "pr32_ai_promotion_plan")
+    assert pr33["command"][pr33["command"].index("--out") + 1] == str(decisions)
+    assert pr33["command"][pr33["command"].index("--validate-out") + 1] == str(validation)
+    decisions.resolve().relative_to(out_dir.resolve())
+    validation.resolve().relative_to(out_dir.resolve())
+    assert pr33["output_paths"] == [str(decisions), str(validation)]
+    assert pr34["input_paths"] == [
+        str(out_dir / "pr32_ai_promotion_plan" / "ai-candidate-promotion-plan.json"),
+        str(decisions),
+        str(validation),
+    ]
+    assert pr34["command"][pr34["command"].index("--decisions") + 1] == str(decisions)
+    assert pr34["command"][pr34["command"].index("--decision-validation") + 1] == str(validation)
+
+
+def test_pr33_real_script_advances_to_pr34_without_path_containment_error(tmp_path: Path) -> None:
+    out_dir = tmp_path / "run"
+    promo_dir = out_dir / "pr32_ai_promotion_plan"
+    promo_dir.mkdir(parents=True)
+    (promo_dir / "ai-candidate-approval-queue.json").write_text(
+        json.dumps(
+            {
+                "project": "TestProject",
+                "schema_version": "ai_candidate_approval_queue_v1",
+                "approval_items": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (promo_dir / "ai-candidate-promotion-plan.json").write_text(
+        json.dumps({"project": "TestProject", "schema_version": "ai_candidate_promotion_plan_v1", "promotion_candidates": []}),
+        encoding="utf-8",
+    )
+
+    result = phase_driver.main([
+        "TestProject",
+        "--workflow",
+        "topology_ai",
+        "--start",
+        "pr33",
+        "--end",
+        "pr34",
+        "--out-dir",
+        str(out_dir),
+        "--allow-existing-outputs",
+    ])
+
+    assert result == 0
+    rows = stage_results(out_dir)
+    pr33 = next(row for row in rows if row["phase_id"] == "pr33_ai_approval_decisions")
+    pr34 = next(row for row in rows if row["phase_id"] == "pr34_ai_promotion_apply_dry_run")
+    decisions = promo_dir / "ai-approval-decisions.json"
+    validation = promo_dir / "ai-approval-decision-validation.json"
+    assert pr33["status"] == "passed"
+    assert "output path must be inside out-dir" not in pr33["stderr_preview"]
+    assert decisions.exists()
+    assert validation.exists()
+    assert pr34["status"] != "blocked_missing_input"
+    assert read_json(decisions)["summary"]["safe_to_apply_count"] == 0
+    assert read_json(out_dir / "phase-driver-manifest.json")["safe_for_core_apply"] is False
+    assert read_json(out_dir / "phase-driver-manifest.json")["ready_for_core_apply"] is False
 
 
 def test_qwen_vision_reporting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

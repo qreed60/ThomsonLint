@@ -47,6 +47,16 @@ After PR26 and optional response import, the driver checks for saved raw AI resp
 
 PR26-PR37 remain isolated and review-only. The driver does not write candidate outputs into authoritative core locations, does not apply promotions to core, does not merge addenda, and does not run post-promotion allocation or calculation reruns. Full core apply remains a future explicit stage.
 
+PR33 uses the approval decision editor's existing output safety contract. Its decision and validation artifacts are written inside the same run-local PR32 promotion directory:
+
+```text
+exports/TestProject/phase_runs/topology_ai/<run-id>/pr32_ai_promotion_plan/
+  ai-approval-decisions.json
+  ai-approval-decision-validation.json
+```
+
+This is isolated same-run promotion directory mutation, not core mutation. PR34 consumes these exact recorded paths.
+
 ## Stage Order
 
 1. `pre01_locate_post_conversion_exports`

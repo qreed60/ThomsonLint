@@ -236,11 +236,11 @@ def _promotion_dir(paths: TopologyPaths) -> Path:
 
 
 def _approval_decisions(paths: TopologyPaths) -> Path:
-    return paths.stage_file("pr33_ai_approval_decisions", "ai-approval-decisions.json")
+    return _promotion_dir(paths) / "ai-approval-decisions.json"
 
 
 def _approval_validation(paths: TopologyPaths) -> Path:
-    return paths.stage_file("pr33_ai_approval_decisions", "ai-approval-decision-validation.json")
+    return _promotion_dir(paths) / "ai-approval-decision-validation.json"
 
 
 def _dry_apply_dir(paths: TopologyPaths) -> Path:

@@ -607,7 +607,22 @@ def main(argv: list[str] | None = None) -> int:
         }
 
         write_json(decisions_out, artifact)
-        print(f"ai approval decision template: project={args.project} decisions={len(decisions)} out={decisions_out}")
+        validation_artifact = validate_decisions(
+            artifact,
+            approval_queue_data,
+            promotion_plan_data if promotion_plan_data else None,
+            strict=args.strict,
+            promotion_status_data=promotion_status_data if promotion_status_data else {},
+        )
+        validation_artifact["source_decisions"] = str(decisions_out)
+        write_json(validate_out, validation_artifact)
+        validation_summary = validation_artifact.get("summary", {})
+        print(
+            f"ai approval decision template: project={args.project} decisions={len(decisions)} out={decisions_out} "
+            f"validation_out={validate_out} validation_pass={validation_artifact['validation_pass']} "
+            f"invalid={validation_summary.get('invalid_decision_count', 0)} "
+            f"missing={validation_summary.get('missing_decision_count', 0)}"
+        )
         return 0
 
     # 6. Branch: edit (--approve / --reject / --needs-info)
