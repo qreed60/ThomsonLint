@@ -1121,3 +1121,13 @@ PR41 adds `pre10_current_model_seed` before PR19 in the `topology_ai` driver. Th
 If `exports/TestProject-current-model.json` exists, it is copied/indexed into the run directory and preserved as the explicit current source. If it is missing, the stage creates an empty/manual-review seed with placeholders only. Placeholders must use null current values, require human review, and remain unusable for allocation.
 
 PR19 must consume the run-dir seed artifact, not hardcode the export-root current model. Unknown current is never zero, and no current may be inferred from BOM, topology, rail names, or package assumptions. PR26 packet generation may proceed from the missing-data manifest even when current/rating calculation stages are blocked. PR41 does not call AI or qwen_vision and does not write or apply core artifacts.
+
+### PR42 AI Packet Response Import Rules
+
+PR42 adds `scripts/ai_packet_response_import.py` and the `pr26_ai_packet_response_import` driver stage between PR26 and PR27. The stage is offline only: it imports externally prepared raw response JSON files into the PR26 packet directory layout expected by PR27.
+
+Accepted source names include `<packet_id>.json`, `<packet_id>_raw_response.json`, `packet_<n>_response.json`, and `<packet_id>/raw_response.json`. Every source must match an actual packet from `packet_queue.json`; unknown packet IDs, invalid JSON, duplicate responses, and missing responses are recorded in review/blocker artifacts.
+
+Default topology_ai behavior remains unchanged. If no `--responses-dir` or fixture response directory is provided, the import stage is not applicable and PR27 blocks on missing raw responses. With `--responses-dir`, import runs before PR27. `--allow-partial-responses` may be used for subset validation, but missing packets must remain explicit.
+
+The importer and driver must not call AI services, require qwen_vision, fabricate response content, synthesize accepted extraction results, mutate source response files, apply candidates to core, merge addenda, or set `safe_for_core_apply` / `ready_for_core_apply` true.

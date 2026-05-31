@@ -41,7 +41,9 @@ PR26 packet generation can run from the missing-data manifest even if current/ra
 
 PR26 builds prompt-ready packet scaffolding only. It does not call AI services, does not invoke qwen_vision, and does not fabricate raw AI extraction responses. The driver records qwen_vision as configured only when the environment indicates a qwen vision model; `qwen_vision_invoked` remains false unless an implemented script actually invokes it.
 
-After PR26, the driver checks for saved raw AI response artifacts. If they are missing, PR27 is marked `blocked_missing_input` and PR28-PR37 are skipped with a blocker reference. Existing or fixture AI artifacts are considered only when explicitly requested with `--fixtures-dir` or `--continue-with-existing-ai-artifacts`.
+PR42 adds an offline response import stage between PR26 and PR27. By default it is `not_applicable`, and the PR27 missing-response block is still expected when no raw responses exist. When `--responses-dir PATH` is supplied, the driver imports externally prepared response JSON into `pr26_ai_packet_build/packets/<packet_id>/raw_response.json` before PR27 validation. Fixture response directories are also recognized under `--fixtures-dir` as `responses/` or `ai_responses/`.
+
+After PR26 and optional response import, the driver checks for saved raw AI response artifacts. If they are missing, PR27 is marked `blocked_missing_input` and PR28-PR37 are skipped with a blocker reference. Existing or fixture AI artifacts are considered only when explicitly requested with `--fixtures-dir`, `--responses-dir`, or `--continue-with-existing-ai-artifacts`.
 
 PR26-PR37 remain isolated and review-only. The driver does not write candidate outputs into authoritative core locations, does not apply promotions to core, does not merge addenda, and does not run post-promotion allocation or calculation reruns. Full core apply remains a future explicit stage.
 
@@ -68,17 +70,18 @@ PR26-PR37 remain isolated and review-only. The driver does not write candidate o
 19. `pr24_fuse_margin`
 20. `pr25_connector_pin_margin`
 21. `pr26_ai_packet_build`
-22. `pr27_ai_extraction_validate`
-23. `pr28_ai_patch_build`
-24. `pr29_ai_candidate_materialize`
-25. `pr30_ai_candidate_adapter_outputs`
-26. `pr31_ai_candidate_ingest`
-27. `pr32_ai_promotion_plan`
-28. `pr33_ai_approval_decisions`
-29. `pr34_ai_promotion_apply_dry_run`
-30. `pr35_ai_candidate_core_input_apply`
-31. `pr36_ai_candidate_core_input_ingest`
-32. `pr37_ai_candidate_normalized_review`
+22. `pr26_ai_packet_response_import`
+23. `pr27_ai_extraction_validate`
+24. `pr28_ai_patch_build`
+25. `pr29_ai_candidate_materialize`
+26. `pr30_ai_candidate_adapter_outputs`
+27. `pr31_ai_candidate_ingest`
+28. `pr32_ai_promotion_plan`
+29. `pr33_ai_approval_decisions`
+30. `pr34_ai_promotion_apply_dry_run`
+31. `pr35_ai_candidate_core_input_apply`
+32. `pr36_ai_candidate_core_input_ingest`
+33. `pr37_ai_candidate_normalized_review`
 
 PR22 is copper/via current-density behavior, not margin behavior. PR23 rating ingestion occurs before PR24 and PR25 margins. PR30 creates adapter outputs/artifacts, not adapter scripts.
 
@@ -115,3 +118,16 @@ Required safety booleans are fixed as:
 ## Guidance
 
 Use the topology_ai driver for PR16-PR37 validation. Do not use the old numeric 1-22 evidence_review run for topology/AI validation. The prerequisite and current seed integrations do not call AI or qwen_vision, do not infer current, and do not apply AI candidates or write core promotion outputs.
+
+For offline PR27 testing, provide response files with:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --responses-dir path/to/manual/responses \
+  --allow-existing-outputs
+```
+
+Use `--allow-partial-responses` only when intentionally validating a subset of packet responses.

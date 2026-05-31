@@ -77,6 +77,13 @@ def fake_run_creating_outputs(command: list[str], **_: Any) -> subprocess.Comple
         script = Path(command[1]).name
         outputs_by_script = {
             "ai_packet_phase_build.py": ["packet_queue.json", "phase_status.json"],
+            "ai_packet_response_import.py": [
+                "ai-packet-response-import-manifest.json",
+                "ai-packet-response-import-status.json",
+                "ai-packet-response-import-blockers.json",
+                "ai-packet-response-import-review.json",
+                "ai-packet-response-import-index.json",
+            ],
             "ai_patch_build.py": ["ai-patch-bundle.json"],
             "ai_candidate_materialize.py": ["ai-candidate-inputs.json"],
             "ai_candidate_adapter_build.py": ["ai-adapter-manifest.json"],
@@ -93,6 +100,12 @@ def fake_run_creating_outputs(command: list[str], **_: Any) -> subprocess.Comple
             packet_dir = out_dir / "packets" / "packet_001"
             packet_dir.mkdir(parents=True, exist_ok=True)
             (packet_dir / "status.json").write_text("{}", encoding="utf-8")
+            (out_dir / "packet_queue.json").write_text(json.dumps({"packets": [{"packet_id": "packet_001"}]}), encoding="utf-8")
+        if script == "ai_packet_response_import.py":
+            packet_dir = Path(command[command.index("--packet-dir") + 1])
+            raw = packet_dir / "packets" / "packet_001" / "raw_response.json"
+            raw.parent.mkdir(parents=True, exist_ok=True)
+            raw.write_text(json.dumps({"packet_id": "packet_001", "schema_version": "ai_extraction_result_v1", "status": "completed", "extracted_items": [], "unknown_items": []}), encoding="utf-8")
     return fake_completed(command)
 
 
@@ -136,6 +149,7 @@ def test_topology_ai_dry_run_order_and_no_subprocess(tmp_path: Path, monkeypatch
         "pr24_fuse_margin",
         "pr25_connector_pin_margin",
         "pr26_ai_packet_build",
+        "pr26_ai_packet_response_import",
         "pr27_ai_extraction_validate",
         "pr28_ai_patch_build",
         "pr29_ai_candidate_materialize",
@@ -158,7 +172,8 @@ def test_topology_ai_dry_run_order_and_no_subprocess(tmp_path: Path, monkeypatch
     assert rows[17]["phase_id"] == "pr23_rating_model_ingest"
     assert rows[18]["script"] == "topology_margin_calculate.py"
     assert rows[19]["script"] == "topology_margin_calculate.py"
-    assert "outputs/artifacts" in rows[24]["reason"]
+    assert rows[21]["script"] == "ai_packet_response_import.py"
+    assert "outputs/artifacts" in rows[25]["reason"]
 
 
 def test_missing_raw_ai_blocks_pr27_and_later_without_fabrication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,6 +193,43 @@ def test_missing_raw_ai_blocks_pr27_and_later_without_fabrication(tmp_path: Path
     assert "will not fabricate" in pr27["reason"]
     assert not any((out_dir / "pr26_ai_packet_build").glob("packets/*/raw_response.json"))
     assert all(row["status"] == "skipped" for row in rows if row["pr_number"] >= 28)
+
+
+def test_phase_driver_with_responses_dir_imports_before_pr27(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    responses_dir = tmp_path / "responses"
+    responses_dir.mkdir()
+    (responses_dir / "packet_001.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    manifest = out_dir / "pre09_missing_data_manifest_or_readiness_seed" / "missing-data-manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+    result = phase_driver.main([
+        "TestProject",
+        "--workflow",
+        "topology_ai",
+        "--start",
+        "pr26",
+        "--end",
+        "pr27",
+        "--out-dir",
+        str(out_dir),
+        "--allow-existing-outputs",
+        "--responses-dir",
+        str(responses_dir),
+    ])
+    assert result == 0
+    rows = stage_results(out_dir)
+    importer = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_response_import")
+    pr27 = next(row for row in rows if row["phase_id"] == "pr27_ai_extraction_validate")
+    assert importer["status"] == "passed"
+    assert importer["command"]
+    assert importer["command"].index("--responses-dir") > 0
+    assert pr27["status"] == "passed"
+    assert read_json(out_dir / "phase-driver-manifest.json")["model_routing_summary"]["qwen_vision_invoked"] is False
 
 
 def test_outputs_stay_under_workflow_run_dir_and_safety_flags(tmp_path: Path) -> None:

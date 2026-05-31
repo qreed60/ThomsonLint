@@ -18,6 +18,8 @@ class TopologyPaths:
     strict: bool
     dry_run: bool
     fixtures_dir: Path | None = None
+    responses_dir: Path | None = None
+    allow_partial_responses: bool = False
 
     def core(self, suffix: str) -> Path:
         return self.repo_root / "exports" / f"{self.project}-{suffix}"
@@ -183,6 +185,30 @@ def _existing_current_model(paths: TopologyPaths) -> Path:
 
 def _packet_dir(paths: TopologyPaths) -> Path:
     return paths.stage_dir("pr26_ai_packet_build")
+
+
+def _response_import_dir(paths: TopologyPaths) -> Path:
+    return paths.stage_dir("pr26_ai_packet_response_import")
+
+
+def _response_import_manifest(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pr26_ai_packet_response_import", "ai-packet-response-import-manifest.json")
+
+
+def _response_import_status(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pr26_ai_packet_response_import", "ai-packet-response-import-status.json")
+
+
+def _response_import_blockers(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pr26_ai_packet_response_import", "ai-packet-response-import-blockers.json")
+
+
+def _response_import_review(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pr26_ai_packet_response_import", "ai-packet-response-import-review.json")
+
+
+def _response_import_index(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pr26_ai_packet_response_import", "ai-packet-response-import-index.json")
 
 
 def _validation(paths: TopologyPaths) -> Path:
@@ -575,6 +601,45 @@ def _cmd_pr26(paths: TopologyPaths) -> list[str]:
     ]
 
 
+def _responses_dir(paths: TopologyPaths) -> Path | None:
+    if paths.responses_dir:
+        return paths.responses_dir
+    if paths.fixtures_dir:
+        for candidate in (paths.fixtures_dir / "responses", paths.fixtures_dir / "ai_responses"):
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _cmd_response_import(paths: TopologyPaths) -> list[str] | None:
+    responses = _responses_dir(paths)
+    if responses is None:
+        return None
+    command = [
+        *_py(paths, "ai_packet_response_import.py"),
+        "--project",
+        paths.project,
+        "--packet-dir",
+        str(_packet_dir(paths)),
+        "--responses-dir",
+        str(responses),
+        "--out-dir",
+        str(_response_import_dir(paths)),
+        "--manifest-out",
+        str(_response_import_manifest(paths)),
+        "--status-out",
+        str(_response_import_status(paths)),
+        "--blockers-out",
+        str(_response_import_blockers(paths)),
+        "--review-out",
+        str(_response_import_review(paths)),
+    ]
+    if paths.allow_partial_responses:
+        command.append("--allow-partial")
+    command.extend(_strict(paths))
+    return command
+
+
 def _cmd_pr27(paths: TopologyPaths) -> list[str]:
     return [
         *_py(paths, "ai_extraction_validate.py"),
@@ -765,6 +830,7 @@ TOPOLOGY_AI_PHASES: tuple[PhaseSpec, ...] = (
     PhaseSpec("pr24_fuse_margin", 24, "fuse margin", "topology_margin_calculate.py", lambda p: [_current_allocation(p), _rating_models(p), _missing_manifest(p)], lambda p: [p.stage_file("pr24_fuse_margin", "topology-fuse-margin.json")], lambda p: _cmd_margin(p, "pr24_fuse_margin", "topology-fuse-margin.json"), "PR24 calculates margins using current allocation and rating models."),
     PhaseSpec("pr25_connector_pin_margin", 25, "connector pin current margin", "topology_margin_calculate.py", lambda p: [_current_allocation(p), _rating_models(p), _missing_manifest(p)], lambda p: [p.stage_file("pr25_connector_pin_margin", "topology-connector-pin-current-margin.json")], lambda p: _cmd_margin(p, "pr25_connector_pin_margin", "topology-connector-pin-current-margin.json"), "PR25 calculates connector pin current margins."),
     PhaseSpec("pr26_ai_packet_build", 26, "AI packet generation", "ai_packet_phase_build.py", lambda p: [_missing_manifest(p)], lambda p: [p.stage_file("pr26_ai_packet_build", "packet_queue.json"), p.stage_file("pr26_ai_packet_build", "phase_status.json")], _cmd_pr26, "PR26 creates prompt-ready packets only and does not call AI.", "ai_packet"),
+    PhaseSpec("pr26_ai_packet_response_import", 26, "AI packet response import", "ai_packet_response_import.py", lambda p: [_packet_dir(p) / "packet_queue.json"] + ([_responses_dir(p)] if _responses_dir(p) else []), lambda p: [_response_import_manifest(p), _response_import_status(p), _response_import_blockers(p), _response_import_review(p), _response_import_index(p)], _cmd_response_import, "PR42 imports externally prepared raw responses only; it does not call AI.", "ai_response_import"),
     PhaseSpec("pr27_ai_extraction_validate", 27, "AI extraction validation", "ai_extraction_validate.py", lambda p: [p.stage_file("pr26_ai_packet_build", "packet_queue.json")], lambda p: [_validation(p)], _cmd_pr27, "PR27 validates saved raw AI responses or existing validated extraction artifacts.", "ai_response_required"),
     PhaseSpec("pr28_ai_patch_build", 28, "patch bundle build", "ai_patch_build.py", lambda p: [_validation(p)], lambda p: [_patch_bundle(p)], _cmd_pr28, "PR28 builds deterministic patch bundles from validated extraction artifacts."),
     PhaseSpec("pr29_ai_candidate_materialize", 29, "candidate materialization", "ai_candidate_materialize.py", lambda p: [_patch_bundle(p)], lambda p: [p.stage_file("pr29_ai_candidate_materialize", "ai-candidate-inputs.json")], _cmd_pr29, "PR29 materializes isolated candidate inputs."),
@@ -780,7 +846,9 @@ TOPOLOGY_AI_PHASES: tuple[PhaseSpec, ...] = (
 
 
 PHASE_BY_ID = {phase.phase_id: phase for phase in TOPOLOGY_AI_PHASES}
-PHASE_BY_PR = {f"pr{phase.pr_number}": phase for phase in TOPOLOGY_AI_PHASES}
+PHASE_BY_PR: dict[str, PhaseSpec] = {}
+for phase in TOPOLOGY_AI_PHASES:
+    PHASE_BY_PR.setdefault(f"pr{phase.pr_number}", phase)
 PHASE_BY_PRE = {phase.phase_id.split("_", 1)[0]: phase for phase in TOPOLOGY_AI_PHASES if phase.phase_id.startswith("pre")}
 
 

@@ -1,0 +1,171 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThomsonLint AI packet response import artifacts",
+  "oneOf": [
+    { "$ref": "#/definitions/manifest" },
+    { "$ref": "#/definitions/status" },
+    { "$ref": "#/definitions/blockers" },
+    { "$ref": "#/definitions/review" },
+    { "$ref": "#/definitions/index" }
+  ],
+  "definitions": {
+    "safety": {
+      "type": "object",
+      "required": [
+        "imported_only",
+        "generated_ai_content",
+        "called_ai_service",
+        "fabricated_response",
+        "applied_to_core",
+        "safe_for_core_apply",
+        "ready_for_core_apply"
+      ],
+      "properties": {
+        "imported_only": { "const": true },
+        "generated_ai_content": { "const": false },
+        "called_ai_service": { "const": false },
+        "fabricated_response": { "const": false },
+        "applied_to_core": { "const": false },
+        "safe_for_core_apply": { "const": false },
+        "ready_for_core_apply": { "const": false }
+      }
+    },
+    "base": {
+      "allOf": [
+        { "$ref": "#/definitions/safety" },
+        {
+          "type": "object",
+          "required": ["artifact_type", "schema_version", "generated_at_utc", "project"],
+          "properties": {
+            "artifact_type": { "type": "string" },
+            "schema_version": { "type": "string" },
+            "generated_at_utc": { "type": "string" },
+            "project": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "packet_id",
+        "source_response_file",
+        "destination_response_file",
+        "source_sha256",
+        "imported_sha256",
+        "json_valid",
+        "matched_packet",
+        "status",
+        "reason",
+        "imported_at_utc"
+      ],
+      "properties": {
+        "packet_id": { "type": ["string", "null"] },
+        "source_response_file": { "type": "string" },
+        "destination_response_file": { "type": ["string", "null"] },
+        "source_sha256": { "type": "string" },
+        "imported_sha256": { "type": ["string", "null"] },
+        "json_valid": { "type": "boolean" },
+        "matched_packet": { "type": "boolean" },
+        "status": { "enum": ["imported", "rejected"] },
+        "reason": { "type": "string" },
+        "imported_at_utc": { "type": ["string", "null"] }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "packet_count",
+        "source_response_file_count",
+        "imported_response_count",
+        "missing_response_count",
+        "review_item_count",
+        "blocker_count",
+        "allow_partial",
+        "validate_json_only"
+      ],
+      "properties": {
+        "packet_count": { "type": "integer", "minimum": 0 },
+        "source_response_file_count": { "type": "integer", "minimum": 0 },
+        "imported_response_count": { "type": "integer", "minimum": 0 },
+        "missing_response_count": { "type": "integer", "minimum": 0 },
+        "review_item_count": { "type": "integer", "minimum": 0 },
+        "blocker_count": { "type": "integer", "minimum": 0 },
+        "allow_partial": { "type": "boolean" },
+        "validate_json_only": { "type": "boolean" }
+      }
+    },
+    "manifest": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["packet_dir", "responses_dir", "out_dir", "response_glob", "summary", "imported_responses"],
+          "properties": {
+            "artifact_type": { "const": "ai_packet_response_import_manifest" },
+            "packet_dir": { "type": "string" },
+            "responses_dir": { "type": "string" },
+            "out_dir": { "type": "string" },
+            "response_glob": { "type": "string" },
+            "summary": { "$ref": "#/definitions/summary" },
+            "imported_responses": { "type": "array", "items": { "$ref": "#/definitions/record" } }
+          }
+        }
+      ]
+    },
+    "status": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["status", "summary", "reason"],
+          "properties": {
+            "artifact_type": { "const": "ai_packet_response_import_status" },
+            "status": { "enum": ["passed", "blocked"] },
+            "summary": { "$ref": "#/definitions/summary" },
+            "reason": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "blockers": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["blockers"],
+          "properties": {
+            "artifact_type": { "const": "ai_packet_response_import_blockers" },
+            "blockers": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      ]
+    },
+    "review": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["review_items"],
+          "properties": {
+            "artifact_type": { "const": "ai_packet_response_import_review" },
+            "review_items": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      ]
+    },
+    "index": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["responses"],
+          "properties": {
+            "artifact_type": { "const": "ai_packet_response_import_index" },
+            "responses": { "type": "array", "items": { "$ref": "#/definitions/record" } }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1203,3 +1203,23 @@ The seed stage copies an explicit current model into the workflow run directory 
 PR19 now consumes the run-dir `pre10_current_model_seed/current-model-seed.json` instead of requiring `exports/TestProject-current-model.json` before the workflow starts. `current_model_ingest.py` accepts empty/manual seeds without fabricating current values. Current allocation may still block or produce no allocations when there are no usable numeric currents.
 
 PR41 does not call AI, does not require qwen_vision, does not infer current from topology/BOM/rail names, does not treat unknown current as zero, and does not write or apply core artifacts. PR26 packet generation can proceed from the missing-data manifest even when later current/rating stages are blocked.
+
+## PR42 — AI Packet Response Import and Fixture Workflow v0
+
+PR42 adds an offline/manual import step for externally prepared raw AI packet responses:
+
+```bash
+python scripts/ai_packet_response_import.py \
+  --project TestProject \
+  --packet-dir exports/TestProject/phase_runs/topology_ai/<run-id>/pr26_ai_packet_build \
+  --responses-dir path/to/manual/responses \
+  --out-dir exports/TestProject/phase_runs/topology_ai/<run-id>/pr26_ai_packet_response_import
+```
+
+Supported response filenames include `<packet_id>.json`, `<packet_id>_raw_response.json`, `packet_<n>_response.json`, and `<packet_id>/raw_response.json`. Each response must match a real packet in `packet_queue.json`; unknown packet IDs are rejected/reviewed.
+
+The importer writes manifest, status, blockers, review, and index artifacts, then copies matched responses to `pr26_ai_packet_build/packets/<packet_id>/raw_response.json` for PR27 validation. It records source and imported SHA-256 hashes and never mutates source response files.
+
+The `topology_ai` driver now has `pr26_ai_packet_response_import` between PR26 and PR27. Default behavior is unchanged: without `--responses-dir` or fixture responses, PR27 blocks on missing raw responses. With `--responses-dir`, the driver imports responses before PR27. `--allow-partial-responses` permits subset imports while reporting missing packets.
+
+PR42 does not call AI, does not require qwen_vision, does not fabricate response content, does not synthesize accepted extraction results, and does not apply candidates or write core artifacts.

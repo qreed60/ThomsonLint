@@ -207,6 +207,8 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
         strict=args.strict,
         dry_run=args.dry_run,
         fixtures_dir=Path(args.fixtures_dir).resolve() if args.fixtures_dir else None,
+        responses_dir=Path(args.responses_dir).resolve() if args.responses_dir else None,
+        allow_partial_responses=args.allow_partial_responses,
     )
     blockers: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
@@ -264,7 +266,21 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
                 )
             continue
 
-        if cascade_blocker_id and phase.stage_kind != "ai_packet":
+        if phase.stage_kind == "ai_response_import" and command is None:
+            results.append(
+                stage_record(
+                    phase,
+                    command=[],
+                    status="not_applicable",
+                    return_code=None,
+                    input_paths=inputs,
+                    output_paths=outputs,
+                    reason="no --responses-dir or fixture response directory provided; default PR27 missing-response block remains enabled",
+                )
+            )
+            continue
+
+        if cascade_blocker_id and phase.stage_kind not in {"ai_packet", "ai_response_import", "ai_response_required"}:
             results.append(
                 stage_record(
                     phase,
@@ -355,8 +371,15 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
         for output in outputs:
             output.parent.mkdir(parents=True, exist_ok=True)
         completed = subprocess.run(command or [], cwd=root, text=True, capture_output=True)
-        status = "passed" if completed.returncode == 0 else "failed"
-        reason = phase.reason if status == "passed" else f"command returned {completed.returncode}"
+        if completed.returncode == 0:
+            status = "passed"
+            reason = phase.reason
+        elif phase.stage_kind == "ai_response_import":
+            status = "blocked_missing_input"
+            reason = f"response import blocked; command returned {completed.returncode}"
+        else:
+            status = "failed"
+            reason = f"command returned {completed.returncode}"
         results.append(
             stage_record(
                 phase,
@@ -374,6 +397,13 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
             cascade_blocker_id = f"{phase.phase_id}_failed"
             cascade_reason = reason
             blockers.append(blocker(cascade_blocker_id, phase, reason, []))
+        elif status == "blocked_missing_input":
+            cascade_blocker_id = f"{phase.phase_id}_blocked"
+            cascade_reason = reason
+            blockers.append(blocker(cascade_blocker_id, phase, reason, []))
+        elif phase.stage_kind == "ai_response_required":
+            cascade_blocker_id = None
+            cascade_reason = None
 
     assert_outputs_in_run_dir(results, out_dir)
     artifacts = write_run_artifacts(args, out_dir, selected, results, blockers)
@@ -403,6 +433,8 @@ def write_run_artifacts(
         "flags": {
             "allow_existing_outputs": args.allow_existing_outputs,
             "fixtures_dir": args.fixtures_dir,
+            "responses_dir": args.responses_dir,
+            "allow_partial_responses": args.allow_partial_responses,
             "continue_with_existing_ai_artifacts": args.continue_with_existing_ai_artifacts,
             "stop_at_missing_ai": args.stop_at_missing_ai,
             "strict": args.strict,
@@ -543,6 +575,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out-dir")
     parser.add_argument("--allow-existing-outputs", action="store_true")
     parser.add_argument("--fixtures-dir")
+    parser.add_argument("--responses-dir")
+    parser.add_argument("--allow-partial-responses", action="store_true")
     parser.add_argument("--continue-with-existing-ai-artifacts", action="store_true")
     parser.add_argument("--stop-at-missing-ai", action="store_true")
     parser.add_argument("--strict", action="store_true")
