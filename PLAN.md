@@ -6,7 +6,7 @@ This plan enforces a strict order: inspect inputs first, then setup/tool preflig
 
 3. APPROACH OVERVIEW
 
-**UNVERIFIABLE RULES DIRECTIVE**: 
+**UNVERIFIABLE RULES DIRECTIVE**:
 Rules flagged as [UNVERIFIABLE] or [PARTIALLY VERIFIABLE] due to lack of 3D thermal simulation, physical printing requirements, subjective intent, or missing manual metadata (e.g., DFM_LIB_001, DFT_BUILD_001, DFT_MEAS_001, DFT_PROD_001, SCH_IC_001, SCH_OPT_001, THM_RISE_001, THM_HEAT_001, THM_COOL_001, AERO_VIB_001) must not be guessed or hallucinated. The agent must immediately output them as "Skipped: Unverifiable by AI / Requires Physical Testing / Requires 3D CAD" (or similar explicit limitation) in the final findings JSON or evidence inventory rather than attempting to forge a pass/fail condition.
 
 Artifact-Based Phase Completion Rule:
@@ -46,6 +46,8 @@ Phase 21 — Generate Report
 Phase 22 — Final Summary
 
 Phase 12 AI Data Completion packet model:
+**[Superseded by PR26–PR37]** The conceptual packet model described below was the pre-implementation design for AI-assisted data completion. It has been superseded by the implemented topology/current/rating/calculation-readiness plus AI-assisted candidate completion and review baseline (PR16–PR37). See the "AI-Assisted Candidate Completion and Review Baseline (PR26–PR37)" section below for the actual implemented workflow.
+
 When the deterministic topology/missing-data pipeline needs AI-assisted data completion, it must be represented as one formal phase: `Phase 12: AI Data Completion`. Inside that phase, work is split into bounded stages and packets rather than a giant board-wide AI prompt. Stage examples include `12A` datasheet role/pin extraction, `12B` datasheet current model extraction, `12C` datasheet rating extraction, and `12D` passive/support component extraction. Each packet owns one task, prompt, bounded context, required output schema, validation result, checkpoint/status file, and accepted/rejected/human-review lifecycle state.
 
 The packet execution loop is deterministic: build `packet_queue.json`, write per-packet `request.json`, `context.json`, `prompt.md`, and `status.json`, structurally validate the generated artifacts, and checkpoint phase status before any later runner can execute prompts. AI packet construction and future AI responses must not directly mutate core topology artifacts, current/copper/margin artifacts, or findings. Any future data fill must be validated and applied through an explicit patch step before calculations are rerun.
@@ -189,12 +191,12 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
 - **Purpose**: Perform a structured multi-pass schematic evidence review covering all KB Appendix H check families and Cluster 1 Rules.
 - **Files/tools to inspect/use**: Generated schematic JSON, schematic PNG context if relevant.
 - **REQUIRED TOOL**: `scripts/schematic_helpers.py` (graph-based analysis)
-  
+
   **Command:**
   ```bash
   python scripts/schematic_helpers.py exports/<project>-thomson-export-sch.json --analyze-all --json
   ```
-  
+
   **What this analyzes:**
   - `--analyze-all` runs all deterministic graph-based checks:
     * Single-pin nets (SCH_NET_002)
@@ -204,9 +206,9 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
     * I2C pull-ups (MS_I2C_001)
     * I2C address conflicts (SCH_I2C_002)
     * Op-amp tie-off (SCH_PULLUP_001)
-  
+
   **Output:** LLM-optimized JSON with precise paths (refdes, pin_number, pin_name, net_name, rule_id).
-  
+
   **Individual check flags (optional):**
   - `--single-pins` - Run only SCH_NET_002
   - `--uart-check` - Run only SCH_UART_001
@@ -214,7 +216,7 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
   - `--floating-check` - Run only SCH_FLOAT_001
   - `--i2c-check` - Run only MS_I2C_001, SCH_I2C_002
   - `--opamp-check` - Run only SCH_PULLUP_001
-  
+
 - **Expected evidence/output**:
   - **Net Integrity**: Single-pin nets (SCH_NET_002), cross-sheet labels (SCH_NET_001), consistent naming (SCH_NET_003), duplicate powers (SCH_NET_004).
   - **Component Application**: UART crossover (SCH_UART_001), floating inputs (SCH_FLOAT_001), FET pull-down (SCH_FET_001), op-amp tie-off (SCH_PULLUP_001), op-amp capacitive load (AN_OPAMP_002, AN_OPAMP_003), ADC filter/protection (AN_ADC_001, AN_ADC_003), SMPS comp (PWR_COMP_001).
@@ -239,62 +241,62 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
 - **REQUIRED TOOL**: `scripts/geometry_helpers.py` (quantitative geometry analysis)
 
   **Available Commands:**
-  
+
   **Basic Geometry Analysis:**
   ```bash
   # Get segment statistics for a specific net
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --net <NET_NAME> --json
-  
+
   # Calculate clearance between two nets
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --clearance NET_A NET_B
-  
+
   # Analyze all differential pairs (auto-detected)
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --diff-pairs --json
   ```
-  
+
   **DFM Checks (REQUIRED):**
   ```bash
   # Via annular ring check (DFM_VIA_001, DFM_VIA_003, DFM_VIA_004)
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --check-annular-ring --json
-  
+
   # Acid trap detection (DFM_ACID_001)
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --detect-acid-traps --json
-  
+
   # Board edge clearance (DFM_EDGE_001, net-type-aware: GND=25mil, PWR/SIG=50mil)
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --board-edge-clearance --json
-  
+
   # Copper balance check (DFM_COPPER_001)
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --copper-balance --json
-  
+
   # NPTH keepout check (Appendix K.6)
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --npth --npth-radius 4.0 --json
   ```
-  
+
   **Physical-Math Verification (REQUIRED if stackup available):**
-  
+
   These use `scripts/saturn_engine.py` (integrated into geometry_helpers.py):
-  
+
   ```bash
   # Impedance verification (HS_MAT_001) - Wheeler/Wadell formulas
   # Requires stackup data, verifies single-ended and differential impedance
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --verify-impedance --target-ohms 100 --json
-  
+
   # Trace temperature/ampacity (PWR_TRACE_002) - IPC-2152 formulas
   # Requires stackup data, verifies thermal rise for power nets
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --verify-trace-temp --current-a 3.0 --max-temp-rise 10.0 --json
-  
+
   # Voltage clearance (DFM_TRACE_004) - IPC-2221B tables
   # Requires schematic with voltage annotations
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --check-voltage-clearance --json
   ```
-  
+
   **Trace ampacity check (utility):**
   ```bash
   # Check if a net can carry required current
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --ampacity VCC 2.0
   ```
 
-  
+
   **Rule-to-Tool Mapping (Which tool verifies which rule):**
   - PWR_TRACE_002 (thermal): `--verify-trace-temp` (REQUIRED if stackup available)
   - HS_MAT_001 (impedance): `--verify-impedance` (REQUIRED if stackup available)
@@ -306,7 +308,7 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
   - Appendix K.6 (NPTH keepout): `--npth --npth-radius 4.0` (REQUIRED)
   - HS_DIFF_001-006 (diff pairs): `--diff-pairs` (REQUIRED)
   - PWR_RES_001, DFM_TRACE_005 (net segments): `--net <NET_NAME>` (as needed)
-  
+
   **If stackup unavailable:** Mark impedance/thermal checks as `[STACKUP_DATA_REQUIRED]` in findings but STILL run all DFM checks.
 
 - **Expected evidence/output**:
@@ -365,7 +367,7 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
 - **Files/tools to inspect/use**: `exports/<project>-board-evidence-inventory.json`, `exports/<project>-thomson-export-brd.json`
 
 - **REQUIRED TOOL**: `scripts/geometry_helpers.py` (DFM checks from Phase 9)
-  
+
   **DFM geometry checks (should already be run in Phase 9, if not, run now):**
   ```bash
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --check-annular-ring --json
@@ -373,20 +375,20 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --board-edge-clearance --json
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --copper-balance --json
   ```
-  
+
   **Physical-Math Verification (REQUIRED when stackup available):**
   ```bash
   # IPC-2221B voltage spacing lookup for high-voltage nets
   python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --check-voltage-clearance --json
   ```
-  
+
   **What this verifies:**
   - DFM_VIA_001/003/004: Via annular rings vs manufacturing minimums
   - DFM_ACID_001: Acute-angle copper features (acid traps)
   - DFM_EDGE_001/PANEL_001: Board edge clearances (GND=25mil, PWR/SIG=50mil)
   - DFM_COPPER_001: Layer-by-layer copper balance (warpage prevention)
   - DFM_TRACE_004: IPC-2221B electrical clearance for voltage spacing
-  
+
   **Rule-to-Tool Mapping:**
   - Annular rings: `--check-annular-ring`
   - Acid traps: `--detect-acid-traps`
@@ -411,12 +413,12 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
 - **Files/tools to inspect/use**: Generated BOM JSON (`exports/<project>-bom.json`)
 
 - **REQUIRED TOOL**: `scripts/bom_helpers.py` (deterministic component analysis)
-  
+
   **Command:**
   ```bash
   python scripts/bom_helpers.py exports/<project>-bom.json --audit-components --json
   ```
-  
+
   **What this analyzes:**
   - `--audit-components` runs all deterministic component checks:
     * Heavy components >3g (AERO_VIB_001)
@@ -424,27 +426,27 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
     * Incomplete MPNs (DFM_BOM_001)
     * Lead finish assessment (AERO_SLD_001)
     * Polarized capacitors (SCH_POL_001)
-  
+
   **Individual check flags (optional):**
   ```bash
   # Heavy component check (adjustable threshold)
   python scripts/bom_helpers.py exports/<project>-bom.json --heavy-threshold 3.0 --json
-  
+
   # Capacitor dielectric check (X5R, X7R vs Y5V, Z5U)
   python scripts/bom_helpers.py exports/<project>-bom.json --check-dielectrics --json
-  
+
   # MPN completeness audit
   python scripts/bom_helpers.py exports/<project>-bom.json --audit-mpns --json
-  
+
   # Lead finish check (Sn vs SnPb)
   python scripts/bom_helpers.py exports/<project>-bom.json --check-lead-finish --json
-  
+
   # Polarized component check
   python scripts/bom_helpers.py exports/<project>-bom.json --polarized --json
   ```
-  
+
   **Output:** LLM-optimized JSON with precise paths (refdes, mpn, description, rule_id).
-  
+
   **Rule-to-Tool Mapping:**
   - AERO_VIB_001 (heavy components): `--heavy-threshold`
   - COMP_CAP_001 (dielectrics): `--check-dielectrics`
@@ -507,7 +509,7 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
 - **Files/tools to inspect/use**: All generated JSON artifacts, datasheets.
 
 - **REQUIRED TOOL**: `scripts/cross_check_helpers.py` (tripartite set operations and topology mapping)
-  
+
   **Command:**
   ```bash
   python scripts/cross_check_helpers.py \
@@ -516,34 +518,34 @@ py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --am
     --brd exports/<project>-thomson-export-brd.json \
     --json
   ```
-  
+
   **What this analyzes (all checks run by default):**
   - RefDes reconciliation (tripartite set matching)
   - Package mismatches (DFM_LIB_002)
   - Netlist topology verification (SCH_NET_001)
   - Voltage derating margins (SCH_POL_001, COMP_CAP_002)
-  
+
   **Individual check flags (optional):**
   ```bash
   # RefDes tripartite matching (BOM ∩ SCH ∩ BRD)
   python scripts/cross_check_helpers.py --bom <bom> --sch <sch> --brd <brd> --run-reconciliation --json
-  
+
   # Package mismatch detection (DFM_LIB_002)
   python scripts/cross_check_helpers.py --bom <bom> --brd <brd> --check-packages --json
-  
+
   # Netlist topology verification (SCH_NET_001)
   python scripts/cross_check_helpers.py --sch <sch> --brd <brd> --verify-netlist --json
-  
+
   # Voltage derating validation (SCH_POL_001, COMP_CAP_002)
   python scripts/cross_check_helpers.py --bom <bom> --sch <sch> --verify-derating --json
   ```
-  
+
   **Output:** LLM-optimized JSON with precise discrepancy reporting:
   - RefDes in BOM but not in SCH/BRD (and vice versa)
   - Package name mismatches (BOM vs BRD footprint)
   - Net connectivity differences (SCH pins vs BRD pads)
   - Insufficient voltage margins (rated vs applied voltage)
-  
+
   **Rule-to-Tool Mapping:**
   - RefDes consistency: `--run-reconciliation`
   - DFM_LIB_002 (package mismatch): `--check-packages`
@@ -710,3 +712,395 @@ Report:
 - HTML report path
 - HTML report exists: yes/no
 - markdown-only report detected: yes/no
+
+
+## Topology and Calculation Foundation (PR16–PR25)
+
+The following deterministic scripts form the topology/current/rating/calculation-readiness foundation. Each PR produces authoritative artifacts that are **not** modified by later AI-assisted candidate stages (PR26–PR37).
+
+### PR16 — Missing Data Manifest
+- **Script**: `scripts/missing_data_manifest.py`
+- **Purpose**: Inventory missing datasheets, evidence gaps, and readiness state.
+- **Output artifacts**: `exports/<project>-missing-data-manifest.json`, manifest validation JSON.
+- **Validation**: Manifest parses successfully; status counts (found/missing/not_applicable_generic) are consistent.
+
+### PR17 — Calculation Schemas and Examples
+- **Docs**: `docs/calculation_schemas.md`
+- **Purpose**: Define calculation input/result schemas with worked examples.
+- **Output artifacts**: Schema files under `schemas/`, example JSON under `examples/calculation_examples/`.
+- **Validation**: Schema files parse as valid JSON; examples conform to schema structure.
+
+### PR18 — Basic Copper Calculations v0
+- **Script**: `scripts/topology_copper_calculate.py`
+- **Purpose**: Compute copper layer resistance, trace width, and current-carrying capacity from topology data.
+- **Output artifacts**: Copper calculation results under `exports/`.
+- **Validation**: Output JSON conforms to calculation result schema; values are internally consistent.
+
+### PR19 — Current Model Ingestion v0
+- **Script**: `scripts/current_model_ingest.py`
+- **Purpose**: Ingest current model data from schematic/netlist sources into structured format.
+- **Output artifacts**: Current model JSON under `exports/`.
+- **Validation**: Output parses; net-to-current mappings are complete for available data.
+
+### PR20 — Topology Current Allocation v0
+- **Script**: `scripts/topology_current_allocate.py`
+- **Purpose**: Allocate currents across topology branches and nets.
+- **Output artifacts**: Allocated current results under `exports/`.
+- **Validation**: Sum of allocated currents is consistent with source model; no orphaned nets.
+
+### PR21 — Wire Allocated Currents into Copper Calculations
+- **Integration**: Connects PR20 allocation outputs to PR18 copper calculation inputs.
+- **Purpose**: Feed branch-level current allocations into copper layer calculations.
+- **Output artifacts**: Extended copper calculation results incorporating wire-level currents.
+- **Validation**: Copper calculations reference valid allocated-current sources; no missing references.
+
+### PR22 — Via Current Density v0
+- **Integration**: Part of topology margin calculation pipeline.
+- **Purpose**: Compute via current density from allocated currents and via geometry.
+- **Output artifacts**: Via current density results under `exports/`.
+- **Validation**: Density values are non-negative; via-to-current mappings are complete for available data.
+
+### PR23 — Rating Model Ingestion v0
+- **Script**: `scripts/rating_model_ingest.py`
+- **Purpose**: Ingest component rating models from datasheets and BOM sources.
+- **Output artifacts**: Rating model JSON under `exports/`.
+- **Validation**: Output parses; part-to-rating mappings are complete for available data.
+
+### PR24 — Fuse Margin v0
+- **Integration**: Part of topology margin calculation pipeline.
+- **Purpose**: Compute fuse current margins from rating models and allocated currents.
+- **Output artifacts**: Fuse margin results under `exports/`.
+- **Validation**: Margins are computed for all available fuse entries; no negative or NaN values.
+
+### PR25 — Connector Pin Current Margin v0
+- **Integration**: Part of topology margin calculation pipeline.
+- **Purpose**: Compute connector pin current margins from rating models and allocated currents.
+- **Output artifacts**: Connector pin margin results under `exports/`.
+- **Validation**: Margins are computed for all available connector pins; no negative or NaN values.
+
+
+## AI-Assisted Candidate Completion and Review Baseline (PR26–PR37)
+
+The following deterministic scripts implement the AI-assisted candidate completion and review baseline. These scripts:
+
+- **Never call AI models directly.** They generate, validate, materialize, and review artifacts around AI-assisted results.
+- **Do not modify core topology/current/copper/margin artifacts.** All outputs are isolated candidate or review-only files.
+- **Produce findings/pass-fail/compliance judgments.** These stages produce review artifacts only; no pass/fail/compliance fields are emitted.
+- **Keep `safe_for_core_apply` and `ready_for_core_apply` as `false`.** No stage through PR37 sets these to true.
+
+### PR26 — AI Packet Phase Driver v0
+- **Script**: `scripts/ai_packet_phase_build.py`
+- **Purpose**: Generate packetized AI extraction request files from missing-data/readiness inputs.
+- **Output artifacts**: `packet_queue.json`, per-packet `request.json`, `context.json`, `prompt.md`, `status.json`.
+- **Validation**: Packet queue parses; all required per-packet fields present; status files initialized.
+
+### PR27 — AI Extraction Result Schema and Validator v0
+- **Script**: `scripts/ai_extraction_validate.py`
+- **Purpose**: Define extraction result schema and structurally validate AI-generated extraction outputs.
+- **Output artifacts**: Validation JSON with pass/fail per packet (validation only, not design compliance).
+- **Validation**: All validated packets have required fields; structural errors are reported.
+
+### PR28 — AI Patch Builder v0
+- **Script**: `scripts/ai_patch_build.py`
+- **Purpose**: Create patch bundles from validated extraction results for candidate data fill.
+- **Output artifacts**: Patch bundle files under `exports/`.
+- **Validation**: Patch bundles parse; all referenced source fields exist in target artifacts.
+
+### PR29 — AI Candidate Input Materialization v0
+- **Script**: `scripts/ai_candidate_materialize.py`
+- **Purpose**: Materialize candidate input files from patch bundles for downstream processing.
+- **Output artifacts**: Candidate input JSON files under `exports/`.
+- **Validation**: Materialized inputs parse; all required fields present; no references to missing sources.
+
+### PR30 — AI Candidate Ingestion Adapters v0
+- **Script**: `scripts/ai_candidate_adapter_build.py`
+- **Purpose**: Generate adapter artifacts/files from candidate input materialization for ingestion.
+- **Output artifacts**: Adapter outputs under `exports/`.
+- **Validation**: Adapter files parse; all required adapter fields present; no references to missing sources.
+
+### PR31 — AI Candidate Ingestion Workflow Wrapper v0
+- **Script**: `scripts/ai_candidate_ingest_workflow.py`
+- **Purpose**: Wrap existing ingestion scripts for isolated candidate ingestion (outputs not written to core).
+- **Output artifacts**: Isolated candidate ingestion outputs under `exports/candidate/`.
+- **Validation**: Candidate outputs are isolated; no writes to authoritative topology/current/rating files.
+
+### PR32 — AI Candidate Promotion Plan / Approval Queue v0
+- **Script**: `scripts/ai_candidate_promotion_plan.py`
+- **Purpose**: Generate promotion plan and approval queue from candidate ingestion results.
+- **Output artifacts**: Promotion plan JSON, approval queue under `exports/`.
+- **Validation**: Promotion plan parses; all candidates have corresponding queue entries; source references are valid.
+
+### PR33 — AI Approval Queue Editor v0
+- **Script**: `scripts/ai_approval_decision_edit.py`
+- **Purpose**: Produce human approval decisions from the PR32 approval queue (a source artifact).
+- **Output artifacts**: `ai-approval-decisions.json`, `ai-approval-decision-validation.json`.
+- **Validation**: Decisions parse; validation JSON confirms all required fields present. The PR32 approval queue remains a source artifact and is not modified by this stage.
+
+### PR34 — Approved-Only Promotion Apply Dry Run v0
+- **Script**: `scripts/ai_promotion_apply_dry_run.py`
+- **Purpose**: Execute approved-only promotion as a dry run (no writes to core or candidate files).
+- **Output artifacts**: Dry-run output JSON under `exports/`.
+- **Validation**: Dry-run output parses; no file system modifications occurred; all approved candidates accounted for.
+
+### PR35 — Approved Promotion Apply to Candidate Core Inputs v0
+- **Script**: `scripts/ai_candidate_core_input_apply.py`
+- **Purpose**: Apply approved promotion decisions to candidate core input files (not authoritative topology).
+- **Output artifacts**: Candidate core input files under `exports/candidate-core/`.
+- **Validation**: Applied inputs parse; all changes are within candidate file scope only.
+
+### PR36 — Candidate Core Input Ingestion Workflow v0
+- **Script**: `scripts/ai_candidate_core_input_ingest_workflow.py`
+- **Purpose**: Ingest candidate core input files through isolated ingestion workflow (not core).
+- **Output artifacts**: Isolated candidate ingestion outputs under `exports/candidate-ingest/`.
+- **Validation**: Candidate outputs are isolated; no writes to authoritative topology/current/rating files.
+
+### PR37 — Candidate Normalized Promotion Review v0
+- **Script**: `scripts/ai_candidate_normalized_promotion_review.py`
+- **Purpose**: Produce normalized review output from candidate ingestion results for human review.
+- **Output artifacts**: Normalized promotion review JSON under `exports/review/`.
+- **Validation**: Review output parses; all required fields present; no pass/fail/compliance judgments emitted.
+
+
+## Artifact Flow
+
+The complete artifact flow through PR16–PR37:
+
+1. **Missing-data/readiness inputs** → `scripts/missing_data_manifest.py`, `scripts/calculation_readiness_inventory.py`
+2. **Packetized AI extraction request generation** → `scripts/ai_packet_phase_build.py` → `packet_queue.json`, per-packet `request.json`/`context.json`/`prompt.md`/`status.json`
+3. **AI extraction validation** → `scripts/ai_extraction_validate.py` → validated extraction results with structural pass/fail
+4. **Patch bundle creation** → `scripts/ai_patch_build.py` → patch bundles referencing validated extractions
+5. **Candidate materialization** → `scripts/ai_candidate_materialize.py` → candidate input files from patch bundles
+6. **Candidate adapter generation** → `scripts/ai_candidate_adapter_build.py` → adapter artifacts/files for ingestion
+7. **Isolated candidate ingestion** → `scripts/ai_candidate_ingest_workflow.py` + `scripts/ai_candidate_core_input_ingest_workflow.py` → isolated candidate outputs (not core)
+8. **Promotion planning and approval queue** → `scripts/ai_candidate_promotion_plan.py` → promotion plan, PR32 approval queue (source artifact)
+9. **Human approval decisions** → `scripts/ai_approval_decision_edit.py` → `ai-approval-decisions.json`, `ai-approval-decision-validation.json`. The PR32 approval queue remains a source artifact and is not modified by this stage.
+10. **Approved-only dry-run operations** → `scripts/ai_promotion_apply_dry_run.py` → dry-run output (no writes to core)
+11. **Candidate core-input apply** → `scripts/ai_candidate_core_input_apply.py` → candidate core input files (not authoritative topology)
+12. **Candidate core-input ingestion** → `scripts/ai_candidate_core_input_ingest_workflow.py` → isolated candidate ingestion outputs
+13. **Candidate normalized promotion review** → `scripts/ai_candidate_normalized_promotion_review.py` → normalized review output for human review
+14. **Future explicit core apply stage** — Not yet implemented. Core artifacts remain unmodified through PR37.
+
+
+## Model-Role Clarification
+
+### OpenHands Controller Model
+- **Model**: `qwen3.6_35b_a3b_openhands` (or configured equivalent)
+- **Purpose**: Used to edit docs/code, reason about repo changes, and execute shell commands. This is the agent running this workflow.
+
+### ThomsonLint Text/Reasoning Model
+- **Model**: `qwen3.6_35b_a3b_openhands` or the configured local text model
+- **Purpose**: Used for text packet review, datasheet extraction, candidate reasoning, and workflow assistance when AI packets are actually executed outside deterministic scripts (PR26–PR37).
+
+### ThomsonLint Vision Model
+- **Model**: `qwen_vision`
+- **Purpose**: Used for schematic/layout/PNG/board-image review packets and multimodal extraction. This is **not** the OpenHands controller model. The deterministic PR26–PR37 scripts do not directly call `qwen_vision`; they generate/validate/materialize/review artifacts around AI-assisted results. Deeper targeted `qwen_vision` review remains a future priority: targeted circuit/region vision review with extraction, calculations, and cross-checks against schematic JSON, BOM, datasheets, and board JSON.
+
+
+## Runbook Environment Variables
+
+These are runbook/manual orchestration variables, not working CLI flags. No implemented script consumes them directly as CLI arguments.
+
+| Variable | Purpose |
+|----------|---------|
+| `LLM_BASE_URL` | OpenHands controller LLM base URL |
+| `LLM_MODEL` | OpenHands controller model name (e.g., `qwen3.6_35b_a3b_openhands`) |
+| `THOMSONLINT_TEXT_MODEL` | ThomsonLint text/reasoning model for packet execution |
+| `VISION_MODEL` or `THOMSONLINT_VISION_MODEL` | ThomsonLint vision model (`qwen_vision`) for multimodal extraction |
+
+
+## Key Constraints and Boundaries
+
+- **Core artifacts are not modified by PR26–PR37.** All AI-assisted candidate outputs are isolated under `exports/` subdirectories.
+- **AI is never called by the deterministic scripts themselves.** PR26–PR37 scripts generate, validate, materialize, review, and plan around AI-assisted results without invoking any model.
+- **Existing ingestion scripts may be invoked only by wrapper stages** that write isolated candidate outputs (PR31, PR36). They do not write to authoritative topology/current/rating files.
+- **Allocation/calculation reruns are NOT performed after AI candidate promotion** until a future explicit stage exists.
+- **Addenda remain review-only until a future merge validator exists.** No stage through PR37 merges addenda into authoritative topology.
+- **Findings/pass-fail/compliance judgments are NOT produced by these stages.** PR26–PR37 produce review artifacts only.
+- **`safe_for_core_apply` and `ready_for_core_apply` remain `false`** through PR37. No stage sets either to true.
+
+
+## TestProject Manual Runbook
+
+### Setup
+```bash
+# Verify Python 3 is available
+which python3
+
+# Install poppler-utils if PDFs are present in input/
+apt-get update && apt-get install -y poppler-utils
+
+# Verify tools
+which pdftoppm
+which pdfinfo
+pdftoppm -v
+pdfinfo -v
+```
+
+### PR16–PR25: Topology/Calculation Artifact Generation
+```bash
+# PR16 — Missing Data Manifest
+python3 scripts/missing_data_manifest.py --input input/ --output exports/
+
+# Verify manifest
+python3 -m json.tool exports/<project>-missing-data-manifest.json | head -50
+
+# PR17 — Calculation Schemas (docs only; schemas already in repo)
+# No script execution required; see docs/calculation_schemas.md and schemas/
+
+# PR18 — Basic Copper Calculations v0
+python3 scripts/topology_copper_calculate.py --topology exports/<project>-topology.json --output exports/
+
+# Verify copper calculations
+python3 -m json.tool exports/<project>-copper-calculations.json | head -50
+
+# PR19 — Current Model Ingestion v0
+python3 scripts/current_model_ingest.py --input input/ --output exports/
+
+# Verify current model
+python3 -m json.tool exports/<project>-current-model.json | head -50
+
+# PR20 — Topology Current Allocation v0
+python3 scripts/topology_current_allocate.py --current-model exports/<project>-current-model.json --output exports/
+
+# Verify allocation
+python3 -m json.tool exports/<project>-current-allocation.json | head -50
+
+# PR21 — Wire Allocated Currents into Copper Calculations (integration step)
+# Handled by copper calculation pipeline; verify extended outputs above.
+
+# PR22–PR25 — Via Current Density, Fuse Margin, Connector Pin Margin (margin calculation pipeline)
+python3 scripts/topology_margin_calculate.py --topology exports/<project>-topology.json --current-model exports/<project>-current-model.json --output exports/
+
+# Verify margin calculations
+python3 -m json.tool exports/<project>-via-current-density.json | head -50
+python3 -m json.tool exports/<project>-fuse-margin.json | head -50
+python3 -m json.tool exports/<project>-connector-pin-margin.json | head -50
+
+# PR23 — Rating Model Ingestion v0 (standalone)
+python3 scripts/rating_model_ingest.py --input input/ --output exports/
+
+# Verify rating model
+python3 -m json.tool exports/<project>-rating-model.json | head -50
+```
+
+### PR26–PR37: AI/Candidate/Promotion/Review Commands
+```bash
+# PR26 — AI Packet Phase Driver v0
+python3 scripts/ai_packet_phase_build.py --input exports/ --output exports/packets/
+
+# Verify packet queue
+python3 -m json.tool exports/packets/packet_queue.json | head -50
+
+# PR27 — AI Extraction Result Schema and Validator v0
+python3 scripts/ai_extraction_validate.py --packets exports/packets/ --output exports/validation/
+
+# Verify validation results
+python3 -m json.tool exports/validation/extraction-validation.json | head -50
+
+# PR28 — AI Patch Builder v0
+python3 scripts/ai_patch_build.py --validations exports/validation/ --output exports/patches/
+
+# Verify patch bundles
+python3 -m json.tool exports/patches/patch-bundle.json | head -50
+
+# PR29 — AI Candidate Input Materialization v0
+python3 scripts/ai_candidate_materialize.py --patches exports/patches/ --output exports/candidate-inputs/
+
+# Verify materialized inputs
+python3 -m json.tool exports/candidate-inputs/candidate-input.json | head -50
+
+# PR30 — AI Candidate Ingestion Adapters v0
+python3 scripts/ai_candidate_adapter_build.py --inputs exports/candidate-inputs/ --output exports/adapters/
+
+# Verify adapter artifacts
+ls -la exports/adapters/
+
+# PR31 — AI Candidate Ingestion Workflow Wrapper v0
+python3 scripts/ai_candidate_ingest_workflow.py --adapters exports/adapters/ --output exports/candidate/
+
+# Verify isolated candidate outputs (not core)
+ls -la exports/candidate/
+
+# PR32 — AI Candidate Promotion Plan / Approval Queue v0
+python3 scripts/ai_candidate_promotion_plan.py --candidate-outputs exports/candidate/ --output exports/promotion/
+
+# Verify promotion plan and approval queue (source artifact)
+python3 -m json.tool exports/promotion/promotion-plan.json | head -50
+python3 -m json.tool exports/promotion/approval-queue.json | head -50
+
+# PR33 — AI Approval Queue Editor v0
+python3 scripts/ai_approval_decision_edit.py --approval-queue exports/promotion/approval-queue.json --output exports/approvals/
+
+# Verify approval decisions (PR32 queue remains source artifact)
+python3 -m json.tool exports/approvals/ai-approval-decisions.json | head -50
+python3 -m json.tool exports/approvals/ai-approval-decision-validation.json | head -50
+
+# PR34 — Approved-Only Promotion Apply Dry Run v0
+python3 scripts/ai_promotion_apply_dry_run.py --approvals exports/approvals/ --output exports/dry-run/
+
+# Verify dry-run output (no file system modifications)
+python3 -m json.tool exports/dry-run/dry-run-result.json | head -50
+
+# PR35 — Approved Promotion Apply to Candidate Core Inputs v0
+python3 scripts/ai_candidate_core_input_apply.py --approvals exports/approvals/ --output exports/candidate-core/
+
+# Verify candidate core inputs (not authoritative topology)
+ls -la exports/candidate-core/
+
+# PR37 — Candidate Normalized Promotion Review v0
+python3 scripts/ai_candidate_normalized_promotion_review.py --candidate-ingest outputs from PR36 --output exports/review/
+
+# Verify normalized review output
+python3 -m json.tool exports/review/promotion-review.json | head -50
+```
+
+### Expected Artifact Directories
+| Directory | Contents |
+|-----------|----------|
+| `exports/` | Topology/current/copper/margin/rating authoritative artifacts (PR16–PR25) |
+| `exports/packets/` | AI packet request files (PR26) |
+| `exports/validation/` | Extraction validation results (PR27) |
+| `exports/patches/` | Patch bundles (PR28) |
+| `exports/candidate-inputs/` | Materialized candidate inputs (PR29) |
+| `exports/adapters/` | Adapter artifacts/files (PR30) |
+| `exports/candidate/` | Isolated candidate ingestion outputs (PR31) |
+| `exports/promotion/` | Promotion plan, approval queue source artifact (PR32) |
+| `exports/approvals/` | AI approval decisions and validation (PR33) |
+| `exports/dry-run/` | Dry-run promotion output (PR34) |
+| `exports/candidate-core/` | Candidate core input files (PR35) |
+| `exports/review/` | Normalized promotion review output (PR37) |
+
+### Expected Safe Booleans and Flags
+- All PR26–PR37 outputs have `safe_for_core_apply: false` or equivalent review-only flag.
+- No PR26–PR37 stage sets `ready_for_core_apply: true`.
+- Candidate outputs are isolated under `exports/candidate/`, `exports/candidate-core/`, and `exports/review/`.
+- Authoritative topology/current/copper/margin files from PR16–PR25 remain unmodified.
+
+
+## Required Next Steps
+
+After PR37, the next step is:
+
+1. **Update PLAN.md and OPENHANDS_REVIEW.md** — This documentation task (completed).
+2. **Run a full TestProject pipeline through PR16–PR37** — Execute all deterministic scripts end-to-end with real TestProject data.
+3. **Inspect artifacts manually** — Verify artifact flow, isolation boundaries, and review-only flags using `python -m json.tool` and `head`.
+4. **Decide PR38 scope** — Based on manual inspection results, determine whether PR38 should be:
+   - Explicit core-input apply with opt-in flag, or
+   - Addenda merge validator, or
+   - Missing-data readiness rerun after approved promotion, or
+   - Dedicated full-pipeline smoke/documentation alignment PR.
+
+
+## Proposed/Future PRs
+
+The following PRs are **proposed/future** and not yet implemented:
+
+| PR | Title | Status |
+|----|-------|--------|
+| PR38 | Full TestProject Pipeline Smoke / Documentation Alignment, or Explicit Core-Input Apply with Opt-In Flag | Proposed/Future |
+| PR39 | Addenda Merge Validator | Proposed/Future |
+| PR40 | Missing-Data Readiness Rerun After Approved Promotion | Proposed/Future |
+| PR41 | Allocation/Calculation Rerun After Explicit Promotion | Proposed/Future |
+| PR42 | Report Integration / Human Review Summary | Proposed/Future |
+
+These stages are bounded: none may modify authoritative topology/current/copper/margin artifacts without an explicit opt-in mechanism, and none may merge addenda before a merge validator (PR39) exists.

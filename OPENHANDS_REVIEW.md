@@ -295,7 +295,7 @@ Before reviewing evidence, inspect the repo framework files:
 1. Inspect generated schematic JSON.
 2. **REQUIRED: Run schematic analysis tool**:
    Execute `python scripts/schematic_helpers.py exports/<project>-thomson-export-sch.json --analyze-all --json` to perform deterministic graph-based analysis for rules requiring multi-hop connectivity tracing.
-   
+
    **What this analyzes:**
    - Single-pin nets (SCH_NET_002)
    - UART TX/RX crossover (SCH_UART_001)
@@ -304,9 +304,9 @@ Before reviewing evidence, inspect the repo framework files:
    - I2C pull-ups (MS_I2C_001)
    - I2C address conflicts (SCH_I2C_002)
    - Op-amp tie-off (SCH_PULLUP_001)
-   
+
    **Output:** LLM-optimized JSON with precise paths (refdes, pin_number, pin_name, net_name, rule_id).
-   
+
    **Individual check flags (optional):**
    - `--single-pins` - Run only SCH_NET_002
    - `--uart-check` - Run only SCH_UART_001
@@ -337,52 +337,52 @@ Before reviewing evidence, inspect the repo framework files:
 3. If board JSON is too large to open directly, use chunked or targeted programmatic inspection (Python/jq-style traversal). Do not reduce review to top-level summary only.
 
 4. **REQUIRED: Use `scripts/geometry_helpers.py` for quantitative geometry analysis**:
-   
+
    **DFM Checks (REQUIRED):**
    ```bash
    # Via annular ring check (DFM_VIA_001, DFM_VIA_003, DFM_VIA_004)
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --check-annular-ring --json
-   
+
    # Acid trap detection (DFM_ACID_001)
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --detect-acid-traps --json
-   
+
    # Board edge clearance (DFM_EDGE_001, net-type-aware: GND=25mil, PWR/SIG=50mil)
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --board-edge-clearance --json
-   
+
    # Copper balance check (DFM_COPPER_001)
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --copper-balance --json
-   
+
    # NPTH keepout check (Appendix K.6)
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --npth --npth-radius 4.0 --json
    ```
-   
+
    **Physical-Math Verification (REQUIRED if stackup available):**
    ```bash
    # Impedance verification (HS_MAT_001) - Wheeler/Wadell formulas
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --verify-impedance --target-ohms 100 --json
-   
+
    # Trace temperature/ampacity (PWR_TRACE_002) - IPC-2152 formulas
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --verify-trace-temp --current-a 3.0 --max-temp-rise 10.0 --json
-   
+
    # Voltage clearance (DFM_TRACE_004) - IPC-2221B tables
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --check-voltage-clearance --json
    ```
-   
+
    **Utility Checks (as needed):**
    ```bash
    # Extract all net segment statistics
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --net <NET_NAME> --json
-   
+
    # Calculate clearance between two nets
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --clearance NET_A NET_B
-   
+
    # Analyze all differential pairs (auto-detected)
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --diff-pairs --json
-   
+
    # Verify trace ampacity for power nets
    python scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --ampacity VCC 2.0
    ```
-   
+
    **Rule-to-Tool Mapping:**
    - PWR_TRACE_002 (thermal): `--verify-trace-temp`
    - HS_MAT_001 (impedance): `--verify-impedance`
@@ -393,35 +393,35 @@ Before reviewing evidence, inspect the repo framework files:
    - DFM_COPPER_001 (copper balance): `--copper-balance`
    - Appendix K.6 (NPTH keepout): `--npth --npth-radius 4.0`
    - HS_DIFF_001-006 (diff pairs): `--diff-pairs`
-   
+
    **If stackup unavailable:** Mark impedance/thermal checks as `[STACKUP_DATA_REQUIRED]` in findings but STILL run all DFM checks.
 
 5. **REQUIRED: Physical-Math and Electrical Verification (when stackup data available)**:
    To prevent qualitative hallucination of trace margins, the agent must run physical-math verification using `scripts/saturn_engine.py` (integrated into `scripts/geometry_helpers.py`) to verify electrical constraints against the Board JSON, Schematic JSON, and Stackup files.
-   
+
    Required Verification Runs:
-   
+
    a. **Controlled Impedance Verification (Rule HS_MAT_001)**
       Run Wheeler transmission line models to verify target differential and single-ended impedance:
       ```bash
       py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --verify-impedance --target-ohms 50 --json
       ```
       *Pass Criteria:* Calculated impedance must fall within ±10% of the target class definition.
-   
+
    b. **IPC-2152 Trace Current and Temperature Rise (Rule PWR_TRACE_002)**
       Compute current density capacity for all power nets:
       ```bash
       py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --verify-trace-temp --current-a 3.0 --max-temp-rise 10.0 --json
       ```
       *Pass Criteria:* Peak temperature rise (ΔT) must not exceed 10°C on any power path segment.
-   
+
    c. **IPC-2221B High-Voltage Clearance Check (Rule DFM_TRACE_004)**
       Determine electrical clearances based on net peak voltages parsed from schematic net lists:
       ```bash
       py -3 scripts/geometry_helpers.py exports/<project>-thomson-export-brd.json --check-voltage-clearance --json
       ```
       *Pass Criteria:* Minimum net-to-net clearances must equal or exceed IPC-2221B Table 6-1 spacing boundaries.
-   
+
    Note: Physical-math verification requires stackup data (`input/stackup.csv` or stackup metadata in board JSON) and voltage annotations from schematic. If stackup unavailable, mark these checks as `[STACKUP_DATA_REQUIRED]` in the evidence inventory.
 
 7. **Geometry Analysis Pass/Fail Criteria** (record in board evidence inventory):
@@ -443,7 +443,7 @@ Before reviewing evidence, inspect the repo framework files:
    - **Differential Pairs & High-Speed**: Uncoupled length, symmetry, and mismatches (HS_DIFF_001, HS_DIFF_002, HS_DIFF_003, HS_DIFF_004, HS_DIFF_005, HS_DIFF_006, HS_SER_001, HS_SER_002), DDR length matching (HS_DDR_001, HS_DDR_002), inner-layer routing preference (HS_STACK_001, HS_STACK_002).
    - **Clocks & Crystals**: Trace length, 90-degree bends, routing keepouts under crystals, and proximity (HS_CLK_001, HS_CLK_002, HS_XTAL_001 to HS_XTAL_006).
    - **Power & SMPS Hot Loops**: Cap placement, SW node size, layer alignment, and inductor keepouts (PWR_DECPL_001 to PWR_DECPL_005, PWR_BUCK_001 to PWR_BUCK_006).
-   - **EMC & Signal Integrity**: Ground slots/walls, stitching via grids, return paths, and TVS/Filter placement (EMC_ESD_001 to EMC_ESD_006, EMC_PATH_001, EMC_PLANE_002, EMC_AGG_001, EMC_STITCH_001, EMC_STITCH_002, EMC_VIA_003). 
+   - **EMC & Signal Integrity**: Ground slots/walls, stitching via grids, return paths, and TVS/Filter placement (EMC_ESD_001 to EMC_ESD_006, EMC_PATH_001, EMC_PLANE_002, EMC_AGG_001, EMC_STITCH_001, EMC_STITCH_002, EMC_VIA_003).
    - **Analog Isolation**: ADC partitioning, single-point AGND/DGND, and high-Z guards (AN_ADC_004 to AN_ADC_007, AN_SENSOR_001).
    - **Thermal Area Math**: Copper dissipation area, thermal via arrays (THM_PWR_001, THM_PWR_002, THM_VIA_001, THM_VIA_004, THM_VIA_005), component heat spread (THM_SPREAD_001).
    - **Aerospace Limits**: NPTH copper keepouts for chassis ground (AERO_GND_001).
@@ -471,7 +471,7 @@ Before reviewing evidence, inspect the repo framework files:
 1. Inspect generated stack JSON.
 2. Explicitly inspect candidate stackup sources: generated stack JSON, `input/stackup.csv`, `input/stackup.json`, `input/*.tcfx` (Cadence Allegro/OrCAD technology files), fabrication drawing PDFs, ODB++ archive/folder if present, IPC-2581 stackup/cross-section content if present, and EDA-specific stackup reports if present.
 3. **Note on TCFX Auto-Merge**: The `thomson_bundle_converter.py` now automatically searches for `.tcfx` files and merges stackup data during conversion. Check `exports/*-thomson-export-stack.json` for `tcfx_merge` metadata to verify if TCFX data was merged automatically.
-   
+
    **Manual TCFX merge** (only needed to update existing stackup JSON):
    ```bash
    # Merge Cadence TCFX stackup data to resolve null material properties
@@ -482,17 +482,17 @@ Before reviewing evidence, inspect the repo framework files:
    - Dielectric constants (Dk) and loss tangents (Df)
    - Material names
    - Copper weights
-   
+
    After merging, the stackup JSON will have complete material data enabling physical-math verification.
 
 4. **REQUIRED: If `input/stackup.csv` or `input/stackup.json` exists, run `scripts/stackup_helpers.py`**:
    ```bash
    # Validate stackup and check all criteria
    py -3 scripts/stackup_helpers.py input/stackup.csv --validate-stackup --json
-   
+
    # Or for JSON input
    py -3 scripts/stackup_helpers.py input/stackup.json --validate-stackup --json
-   
+
    # Individual checks available:
    py -3 scripts/stackup_helpers.py input/stackup.csv --check-thickness --json        # DFM_STACKUP_001
    py -3 scripts/stackup_helpers.py input/stackup.csv --check-symmetry --json         # DFM_STACKUP_002
@@ -546,34 +546,34 @@ Before reviewing evidence, inspect the repo framework files:
 1. Inspect generated BOM JSON.
 2. **REQUIRED: Run BOM analysis tool**:
    Execute `python scripts/bom_helpers.py exports/<project>-bom.json --audit-components --json` to perform deterministic component-level analysis.
-   
+
    **What this analyzes:**
    - Heavy components >3g (AERO_VIB_001)
    - Capacitor dielectrics (COMP_CAP_001)
    - Incomplete MPNs (DFM_BOM_001)
    - Lead finish assessment (AERO_SLD_001)
    - Polarized capacitors (SCH_POL_001)
-   
+
    **Individual check flags (optional):**
    ```bash
    # Heavy component check (adjustable threshold)
    python scripts/bom_helpers.py exports/<project>-bom.json --heavy-threshold 3.0 --json
-   
+
    # Capacitor dielectric check (X5R, X7R vs Y5V, Z5U)
    python scripts/bom_helpers.py exports/<project>-bom.json --check-dielectrics --json
-   
+
    # MPN completeness audit
    python scripts/bom_helpers.py exports/<project>-bom.json --audit-mpns --json
-   
+
    # Lead finish check (Sn vs SnPb)
    python scripts/bom_helpers.py exports/<project>-bom.json --check-lead-finish --json
-   
+
    # Polarized component check
    python scripts/bom_helpers.py exports/<project>-bom.json --polarized --json
    ```
-   
+
    **Output:** LLM-optimized JSON with precise paths (refdes, mpn, description, rule_id).
-   
+
    **Rule-to-Tool Mapping:**
    - AERO_VIB_001 (heavy components): `--heavy-threshold`
    - COMP_CAP_001 (dielectrics): `--check-dielectrics`
@@ -662,34 +662,34 @@ Before reviewing evidence, inspect the repo framework files:
 
 2. **REQUIRED: Run cross-check analysis tool**:
    Execute `python scripts/cross_check_helpers.py --bom exports/<project>-bom.json --sch exports/<project>-thomson-export-sch.json --brd exports/<project>-thomson-export-brd.json --json` to perform deterministic cross-source verification.
-   
+
    **What this analyzes (all checks run by default):**
    - RefDes reconciliation (tripartite set matching)
    - Package mismatches (DFM_LIB_002)
    - Netlist topology verification (SCH_NET_001)
    - Voltage derating margins (SCH_POL_001, COMP_CAP_002)
-   
+
    **Individual check flags (optional):**
    ```bash
    # RefDes tripartite matching (BOM ∩ SCH ∩ BRD)
    python scripts/cross_check_helpers.py --bom <bom> --sch <sch> --brd <brd> --run-reconciliation --json
-   
+
    # Package mismatch detection (DFM_LIB_002)
    python scripts/cross_check_helpers.py --bom <bom> --brd <brd> --check-packages --json
-   
+
    # Netlist topology verification (SCH_NET_001)
    python scripts/cross_check_helpers.py --sch <sch> --brd <brd> --verify-netlist --json
-   
+
    # Voltage derating validation (SCH_POL_001, COMP_CAP_002)
    python scripts/cross_check_helpers.py --bom <bom> --sch <sch> --verify-derating --json
    ```
-   
+
    **Output:** LLM-optimized JSON with precise discrepancy reporting:
    - RefDes in BOM but not in SCH/BRD (and vice versa)
    - Package name mismatches (BOM vs BRD footprint)
    - Net connectivity differences (SCH pins vs BRD pads)
    - Insufficient voltage margins (rated vs applied voltage)
-   
+
    **Rule-to-Tool Mapping:**
    - RefDes consistency: `--run-reconciliation`
    - DFM_LIB_002 (package mismatch): `--check-packages`
@@ -812,7 +812,7 @@ Required command: `python3 tools/gen_report.py exports/example-findings.json --o
 - Converter warnings are evidence-quality notes, not design issues by themselves.
 - Each evidence review workflow must produce either candidate findings, `verified_checks`, `cross_checks`, or an explicit limitation/evidence-gap note.
 
-**UNVERIFIABLE RULES DIRECTIVE**: 
+**UNVERIFIABLE RULES DIRECTIVE**:
 Rules flagged as [UNVERIFIABLE] or [PARTIALLY VERIFIABLE] due to lack of 3D thermal simulation, physical printing requirements, subjective intent, or missing manual metadata (e.g., DFM_LIB_001, DFT_BUILD_001, DFT_MEAS_001, DFT_PROD_001, SCH_IC_001, SCH_OPT_001, THM_RISE_001, THM_HEAT_001, THM_COOL_001, AERO_VIB_001) must not be guessed or hallucinated. The agent must immediately output them as "Skipped: Unverifiable by AI / Requires Physical Testing / Requires 3D CAD" (or similar explicit limitation) in the final findings JSON or evidence inventory rather than attempting to forge a pass/fail condition.
 
 ## Non-Goals / Limits
@@ -949,3 +949,108 @@ Report:
 - HTML report path
 - HTML report exists: yes/no
 - markdown-only report detected: yes/no
+
+
+## Topology and AI-Assisted Candidate Workflow (PR16–PR37)
+
+This section covers the topology/current/rating/calculation-readiness foundation (PR16–PR25) and the AI-assisted candidate completion and review baseline (PR26–PR37). These workflows are separate from the original evidence-review workflow. Reviewers must understand both sets of workflows and their boundaries.
+
+### Reviewer Instructions for Topology/AI Workflow
+
+When working with PR16–PR37 content:
+
+- **Start with planning mode / plan-first behavior.** Always inspect PLAN.md first to understand the current state before editing any documentation or code.
+- **Inspect PLAN.md first.** The topology/calculation foundation and AI-assisted candidate workflow sections in PLAN.md are the source of truth for PR16–PR37 status, artifact flow, and constraints.
+- **Inspect current PR scope docs before editing.** Read `docs/ai_*.md` files relevant to the PR being reviewed to understand the intended behavior before making changes.
+- **Avoid broad rewrites.** Make focused, minimal edits to documentation. Do not rewrite entire sections when a targeted update suffices.
+- **Never apply AI candidates directly to core outputs without an explicit future stage.** Core topology/current/copper/margin artifacts must remain unmodified through PR37. Any future core-input apply requires an explicit opt-in mechanism (proposed PR38+).
+- **Never merge addenda into authoritative topology without a merge validator.** Addenda remain review-only until a merge validator exists (proposed PR39). No stage through PR37 merges addenda.
+- **Never run allocation/calculation as part of PR26–PR37 candidate promotion stages.** Allocation and calculation reruns are NOT performed after AI candidate promotion until a future explicit stage (proposed PR40/PR41).
+- **Keep candidate outputs isolated.** Candidate artifacts must remain under `exports/candidate/`, `exports/candidate-core/`, or `exports/review/`. They must not write to authoritative topology/current/rating files.
+- **Preserve deterministic artifacts and stable IDs.** Do not modify the output format, field names, or file paths of PR16–PR37 scripts unless explicitly part of that PR's scope.
+- **Require evidence/provenance for candidate facts.** All AI-assisted candidate data must have traceable provenance back to validated extraction results (PR27) and patch bundles (PR28). Missing provenance is a review blocker, not silent success.
+- **Treat missing provenance as review context/blockers, not silent success.** If an AI extraction result cannot be traced to a validated packet or patch bundle, flag it as a blocker in the review output rather than silently accepting it.
+- **Keep future stages bounded.** Proposed/future PRs (PR38–PR42) must be clearly marked and bounded. They may not modify authoritative artifacts without explicit opt-in mechanisms.
+
+### Topology/AI Workflow Review Checklist
+
+Use this checklist when reviewing any PR in the topology/calculation or AI-assisted candidate workflow:
+
+1. **Does it write core artifacts?** → Should NOT. Core topology/current/copper/margin/rating files must not be modified by AI-assisted stages (PR26–PR37).
+2. **Does it write canonical normalized output filenames?** → Should NOT, unless the PR explicitly is a normalization stage. Use isolated candidate paths instead.
+3. **Does it run ingestion only when the PR explicitly allows isolated candidate ingestion?** → Must verify. Only PR31 and PR36 may invoke existing ingestion scripts, and only for isolated candidate outputs.
+4. **Does it run allocation/calculation?** → Should NOT unless the PR explicitly is a future rerun stage (proposed PR40/PR41).
+5. **Does it emit findings/pass-fail/compliance fields?** → Should NOT. PR26–PR37 produce review artifacts only; no pass/fail/compliance judgments are emitted by these stages.
+6. **Does it infer current/rating values?** → Should NOT. Current and rating values come from deterministic ingestion (PR19, PR23) and allocation (PR20), not AI inference.
+7. **Does it expand connector-wide ratings to pins?** → Should NOT. Pin-level margins are computed by PR25 only.
+8. **Does it infer regulator input/output side?** → Should NOT. Regulator role resolution is handled by deterministic topology scripts, not AI stages.
+9. **Does it merge addenda?** → Should NOT before merge validator (proposed PR39). Addenda remain review-only through PR37.
+10. **Are all generated artifacts under the expected out-dir?** → Must verify against the artifact directory table in PLAN.md's TestProject Manual Runbook section.
+11. **Are source artifacts left unmodified?** → Must verify. Source topology/current/rating files from PR16–PR25 must not be changed by PR26–PR37 stages.
+
+### Validation Commands
+
+Run these commands when validating any changes to the topology/AI workflow:
+
+#### Python Compilation Check
+```bash
+python -m py_compile \
+  scripts/ai_candidate_normalized_promotion_review.py \
+  scripts/ai_candidate_core_input_ingest_workflow.py \
+  scripts/ai_candidate_core_input_apply.py \
+  scripts/ai_promotion_apply_dry_run.py \
+  scripts/ai_approval_decision_edit.py \
+  scripts/ai_candidate_promotion_plan.py \
+  scripts/ai_packet_phase_build.py \
+  scripts/ai_extraction_validate.py \
+  scripts/ai_patch_build.py \
+  scripts/ai_candidate_materialize.py \
+  scripts/ai_candidate_adapter_build.py \
+  scripts/ai_candidate_ingest_workflow.py
+```
+
+#### Pytest
+```bash
+python -m pytest \
+  tests/test_ai_approval_decision_edit.py \
+  tests/test_ai_promotion_apply_dry_run.py \
+  tests/test_ai_candidate_core_input_apply.py \
+  tests/test_ai_candidate_core_input_ingest_workflow.py \
+  tests/test_ai_candidate_normalized_promotion_review.py \
+  tests/test_ai_candidate_promotion_plan.py \
+  tests/test_ai_packet_phase_build.py \
+  tests/test_ai_extraction_validate.py \
+  tests/test_ai_patch_build.py \
+  tests/test_ai_candidate_materialize.py \
+  tests/test_ai_candidate_adapter_build.py \
+  tests/test_ai_candidate_ingest_workflow.py \
+  -v
+```
+
+#### Git Diff Check
+```bash
+git diff --check
+```
+
+### Docs Stale-Claim Grep
+
+Run this grep to find potentially stale claims about future PRs, auto-approved states, or unimplemented stages in documentation:
+
+```bash
+grep -Rni \
+  "next PR.*PR3[0-6]\|future.*PR3[0-6]\|not implemented\|TODO.*PR3[0-7]\|Android compatibility\|auto-approved\|safe_to_apply.*true\|safe_for_core_apply.*true\|ready_for_core_apply.*true" \
+  PLAN.md OPENHANDS_REVIEW.md 2>/dev/null || true
+```
+
+**Note:** Do not automatically remove every grep hit. Review each hit individually and update only if the claim is genuinely stale or misleading. Valid forward references to future PRs should be preserved.
+
+### Agent Safety Rules — Topology/AI Extensions
+
+The existing Agent Safety Rules (lines 209–219 of this file) apply to all workflows. The following additional rules apply specifically to topology and AI-assisted candidate stages:
+
+- Do not modify authoritative topology, current, copper, margin, or rating artifacts through PR37.
+- Do not set `safe_for_core_apply` or `ready_for_core_apply` to true in any artifact or documentation through PR37.
+- Do not claim that AI models are called by deterministic scripts (PR26–PR37). These scripts generate/validate/materialize/review artifacts around AI-assisted results without invoking any model.
+- Do not merge addenda into authoritative topology before a merge validator exists (proposed PR39).
+- Do not run allocation/calculation reruns as part of candidate promotion stages. Reruns require an explicit future stage (proposed PR40/PR41).
+- Do not produce findings/pass-fail/compliance judgments through AI-assisted candidate stages. These stages produce review artifacts only.
