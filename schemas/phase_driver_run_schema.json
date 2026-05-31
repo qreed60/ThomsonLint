@@ -1,0 +1,182 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThomsonLint phase driver run artifacts",
+  "oneOf": [
+    { "$ref": "#/definitions/manifest" },
+    { "$ref": "#/definitions/status" },
+    { "$ref": "#/definitions/stage_results" },
+    { "$ref": "#/definitions/artifact_index" },
+    { "$ref": "#/definitions/blockers" }
+  ],
+  "definitions": {
+    "safety": {
+      "type": "object",
+      "required": [
+        "workflow_run_only",
+        "wrote_core_artifacts",
+        "applied_promotions_to_core",
+        "merged_addenda",
+        "ran_post_promotion_allocation",
+        "ran_post_promotion_calculations",
+        "safe_for_core_apply",
+        "ready_for_core_apply"
+      ],
+      "properties": {
+        "workflow_run_only": { "const": true },
+        "wrote_core_artifacts": { "const": false },
+        "applied_promotions_to_core": { "const": false },
+        "merged_addenda": { "const": false },
+        "ran_post_promotion_allocation": { "const": false },
+        "ran_post_promotion_calculations": { "const": false },
+        "safe_for_core_apply": { "const": false },
+        "ready_for_core_apply": { "const": false }
+      }
+    },
+    "base": {
+      "allOf": [
+        { "$ref": "#/definitions/safety" },
+        {
+          "type": "object",
+          "required": ["artifact_type", "schema_version", "generated_at_utc", "project", "workflow"],
+          "properties": {
+            "artifact_type": { "type": "string" },
+            "schema_version": { "type": "string" },
+            "generated_at_utc": { "type": "string" },
+            "project": { "type": "string" },
+            "workflow": { "enum": ["topology_ai"] }
+          }
+        }
+      ]
+    },
+    "stage_result": {
+      "type": "object",
+      "required": [
+        "workflow",
+        "phase_id",
+        "pr_number",
+        "script",
+        "command",
+        "status",
+        "return_code",
+        "stdout_preview",
+        "stderr_preview",
+        "input_paths",
+        "output_paths",
+        "reason",
+        "blocker_id"
+      ],
+      "properties": {
+        "workflow": { "enum": ["topology_ai"] },
+        "phase_id": { "type": "string" },
+        "pr_number": { "type": "integer", "minimum": 16, "maximum": 37 },
+        "script": { "type": ["string", "null"] },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "status": { "enum": ["passed", "failed", "skipped", "blocked_missing_input", "not_applicable"] },
+        "return_code": { "type": ["integer", "null"] },
+        "stdout_preview": { "type": "string" },
+        "stderr_preview": { "type": "string" },
+        "input_paths": { "type": "array", "items": { "type": "string" } },
+        "output_paths": { "type": "array", "items": { "type": "string" } },
+        "reason": { "type": "string", "minLength": 1 },
+        "blocker_id": { "type": ["string", "null"] },
+        "stage_kind": { "type": "string" }
+      }
+    },
+    "manifest": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["workflow_run_dir", "dry_run", "stage_plan", "model_routing_summary"],
+          "properties": {
+            "artifact_type": { "const": "phase_driver_manifest" },
+            "workflow_run_dir": { "type": "string" },
+            "dry_run": { "type": "boolean" },
+            "stage_plan": { "type": "array", "items": { "type": "object" } },
+            "model_routing_summary": {
+              "type": "object",
+              "required": ["qwen_vision_configured", "qwen_vision_invoked"],
+              "properties": {
+                "LLM_BASE_URL": { "type": ["string", "null"] },
+                "LLM_MODEL": { "type": ["string", "null"] },
+                "THOMSONLINT_TEXT_MODEL": { "type": ["string", "null"] },
+                "VISION_MODEL": { "type": ["string", "null"] },
+                "THOMSONLINT_VISION_MODEL": { "type": ["string", "null"] },
+                "qwen_vision_configured": { "type": "boolean" },
+                "qwen_vision_invoked": { "const": false }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "status": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["overall_status", "stage_counts", "blocker_count"],
+          "properties": {
+            "artifact_type": { "const": "phase_driver_status" },
+            "overall_status": { "enum": ["passed", "failed", "blocked"] },
+            "stage_counts": { "type": "object" },
+            "blocker_count": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "stage_results": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["stage_results"],
+          "properties": {
+            "artifact_type": { "const": "phase_driver_stage_results" },
+            "stage_results": { "type": "array", "items": { "$ref": "#/definitions/stage_result" } }
+          }
+        }
+      ]
+    },
+    "artifact_index": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["workflow_run_dir", "artifacts"],
+          "properties": {
+            "artifact_type": { "const": "phase_driver_artifact_index" },
+            "workflow_run_dir": { "type": "string" },
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["phase_id", "pr_number", "path", "exists", "inside_workflow_run_dir"],
+                "properties": {
+                  "phase_id": { "type": "string" },
+                  "pr_number": { "type": "integer" },
+                  "path": { "type": "string" },
+                  "exists": { "type": "boolean" },
+                  "inside_workflow_run_dir": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "blockers": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["blockers"],
+          "properties": {
+            "artifact_type": { "const": "phase_driver_blockers" },
+            "blockers": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      ]
+    }
+  }
+}

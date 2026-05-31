@@ -5,6 +5,15 @@ PROJECT="${1:-example}"
 START_PHASE="${2:-1}"
 END_PHASE="${3:-22}"
 
+if [[ "$#" -gt 1 ]]; then
+  for arg in "$@"; do
+    if [[ "$arg" == "--workflow" || "$arg" == "--dry-run" ]]; then
+      python3 scripts/phase_driver.py "$@"
+      exit $?
+    fi
+  done
+fi
+
 echo "== Checking LLM env =="
 : "${LLM_API_KEY:?missing LLM_API_KEY}"
 : "${LLM_MODEL:?missing LLM_MODEL}"

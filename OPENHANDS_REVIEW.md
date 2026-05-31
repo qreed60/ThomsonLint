@@ -1054,3 +1054,23 @@ The existing Agent Safety Rules (lines 209–219 of this file) apply to all work
 - Do not merge addenda into authoritative topology before a merge validator exists (proposed PR39).
 - Do not run allocation/calculation reruns as part of candidate promotion stages. Reruns require an explicit future stage (proposed PR40/PR41).
 - Do not produce findings/pass-fail/compliance judgments through AI-assisted candidate stages. These stages produce review artifacts only.
+
+### PR38 Phase Driver Guidance
+
+The original phase driver covered only the evidence_review workflow, phases 1-22. That legacy numeric workflow remains valid:
+
+```bash
+./scripts/run_phase_driver.sh TestProject 1 22
+```
+
+PR38 adds an explicit topology_ai workflow for PR16-PR37:
+
+```bash
+./scripts/run_phase_driver.sh TestProject --workflow topology_ai --start pr16 --end pr37 --dry-run
+```
+
+Use topology_ai for topology/current/rating/calculation and AI-assisted candidate validation. Do not use the old numeric 1-22 evidence_review run for topology/AI validation.
+
+topology_ai deterministic stages are run directly by the driver, not routed through OpenHands. PR26 creates prompt-ready packets only and does not call AI. Missing raw AI responses block PR27 and skip/block PR28-PR37 unless fixture or existing-artifact mode is explicitly requested.
+
+PR26-PR37 outputs are isolated under the workflow run directory and remain review-only. The driver must not apply promotions to core, merge addenda, run post-promotion allocation/calculation reruns, or set `safe_for_core_apply` / `ready_for_core_apply` true. qwen_vision may be reported as configured from environment routing, but it is not invoked unless an implemented script actually invokes it.

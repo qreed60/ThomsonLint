@@ -1104,3 +1104,25 @@ The following PRs are **proposed/future** and not yet implemented:
 | PR42 | Report Integration / Human Review Summary | Proposed/Future |
 
 These stages are bounded: none may modify authoritative topology/current/copper/margin artifacts without an explicit opt-in mechanism, and none may merge addenda before a merge validator (PR39) exists.
+
+## PR38 — Phase Driver Topology/AI Workflow Integration v0
+
+PR38 adds a workflow-aware driver layer while preserving the original evidence_review phase driver. The legacy command remains valid and continues to mean the original OpenHands-backed numeric phases 1-22:
+
+```bash
+./scripts/run_phase_driver.sh TestProject 1 22
+```
+
+The topology/current/rating/calculation and AI-assisted candidate workflow now uses an explicit profile:
+
+```bash
+./scripts/run_phase_driver.sh TestProject --workflow topology_ai --start pr16 --end pr37 --dry-run
+```
+
+The topology_ai profile runs deterministic PR16-PR25 stages directly and keeps PR26-PR37 isolated under `exports/<project>/phase_runs/topology_ai/<run-id>/`. It does not route these stages through OpenHands, does not call AI services, and does not reinterpret the original evidence_review phases.
+
+PR26 builds prompt-ready packets only. Missing raw AI responses block PR27 and cause PR28-PR37 to be skipped or blocked with a clear blocker reference unless fixture or existing-artifact mode is explicitly requested. The driver reports qwen_vision configuration from environment routing, but `qwen_vision_invoked` remains false unless an implemented stage actually invokes it.
+
+PR26-PR37 remain review-only: no authoritative core outputs are written, no promotions are applied to core, no addenda are merged, no post-promotion allocation or calculation reruns are performed, and `safe_for_core_apply` / `ready_for_core_apply` remain false. Full core apply remains a future explicit stage.
+
+Use the topology_ai driver for PR16-PR37 validation. Do not use the old numeric 1-22 evidence_review run for topology/AI validation.
