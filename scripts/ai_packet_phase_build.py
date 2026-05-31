@@ -298,7 +298,8 @@ def context_for_packet(
         "schematic_snippets": relevant_schematic[:20],
         "datasheet_references": bounded_target_rows(optional_data.get("datasheet_manifest"), target_ref)
         + bounded_target_rows(optional_data.get("datasheet_index"), target_ref)
-        + bounded_target_rows(optional_data.get("part_info_index"), target_ref),
+        + bounded_target_rows(optional_data.get("part_info_index"), target_ref)
+        + bounded_datasheet_evidence_rows(optional_data.get("datasheet_evidence_index"), target_ref, target_part, items),
         "source_artifacts": bounded_artifact_refs(source_paths),
         "context_bounds": {
             "includes_only_packet_missing_data_items": True,
@@ -319,6 +320,44 @@ def bounded_target_rows(data: dict[str, Any] | None, refdes: str) -> list[dict[s
             values = {str(value) for value in row.values() if value is not None}
             if refdes in values:
                 rows.append(row)
+    return rows[:20]
+
+
+def bounded_datasheet_evidence_rows(
+    data: dict[str, Any] | None,
+    refdes: str,
+    mpn: str | None,
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(data, dict):
+        return []
+    tokens = {refdes, str(mpn or "")}
+    for item in items:
+        tokens.add(str(item.get("target_id") or ""))
+        tokens.update(str(value) for value in as_list(item.get("affected_components")) if value is not None)
+    tokens = {token for token in tokens if token}
+    rows: list[dict[str, Any]] = []
+    for row in as_list(data.get("candidates")):
+        if not isinstance(row, dict):
+            continue
+        values = {str(value) for value in row.values() if value is not None and not isinstance(value, (dict, list))}
+        if values.intersection(tokens) or not row.get("target_identity"):
+            rows.append(
+                {
+                    "candidate_id": row.get("candidate_id"),
+                    "target_type": row.get("target_type"),
+                    "target_identity": row.get("target_identity"),
+                    "parameter_name": row.get("parameter_name"),
+                    "value_raw": row.get("value_raw"),
+                    "unit_raw": row.get("unit_raw"),
+                    "condition": row.get("condition"),
+                    "source_file": row.get("source_file"),
+                    "page": row.get("page"),
+                    "evidence_quote": row.get("evidence_quote"),
+                    "confidence": row.get("confidence"),
+                    "requires_human_review": row.get("requires_human_review"),
+                }
+            )
     return rows[:20]
 
 
@@ -599,6 +638,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--phase-name", default=DEFAULT_PHASE_NAME)
     parser.add_argument("--datasheet-manifest", default=None)
     parser.add_argument("--datasheet-index", default=None)
+    parser.add_argument("--datasheet-evidence-index", default=None)
     parser.add_argument("--bom", default=None)
     parser.add_argument("--schematic-export", default=None)
     parser.add_argument("--role-resolution", default=None)
@@ -617,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
     optional_paths = {
         "datasheet_manifest": Path(args.datasheet_manifest) if args.datasheet_manifest else None,
         "datasheet_index": Path(args.datasheet_index) if args.datasheet_index else None,
+        "datasheet_evidence_index": Path(args.datasheet_evidence_index) if args.datasheet_evidence_index else None,
         "bom": Path(args.bom) if args.bom else None,
         "schematic_export": Path(args.schematic_export) if args.schematic_export else None,
         "role_resolution": Path(args.role_resolution) if args.role_resolution else None,

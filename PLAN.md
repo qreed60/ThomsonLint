@@ -1104,3 +1104,122 @@ The following PRs are **proposed/future** and not yet implemented:
 | PR42 | Report Integration / Human Review Summary | Proposed/Future |
 
 These stages are bounded: none may modify authoritative topology/current/copper/margin artifacts without an explicit opt-in mechanism, and none may merge addenda before a merge validator (PR39) exists.
+
+## PR38 — Phase Driver Topology/AI Workflow Integration v0
+
+PR38 adds a workflow-aware driver layer while preserving the original evidence_review phase driver. The legacy command remains valid and continues to mean the original OpenHands-backed numeric phases 1-22:
+
+```bash
+./scripts/run_phase_driver.sh TestProject 1 22
+```
+
+The topology/current/rating/calculation and AI-assisted candidate workflow now uses an explicit profile:
+
+```bash
+./scripts/run_phase_driver.sh TestProject --workflow topology_ai --start pr16 --end pr37 --dry-run
+```
+
+The topology_ai profile runs deterministic PR16-PR25 stages directly and keeps PR26-PR37 isolated under `exports/<project>/phase_runs/topology_ai/<run-id>/`. It does not route these stages through OpenHands, does not call AI services, and does not reinterpret the original evidence_review phases.
+
+PR26 builds prompt-ready packets only. Missing raw AI responses block PR27 and cause PR28-PR37 to be skipped or blocked with a clear blocker reference unless fixture or existing-artifact mode is explicitly requested. The driver reports qwen_vision configuration from environment routing, but `qwen_vision_invoked` remains false unless an implemented stage actually invokes it.
+
+PR26-PR37 remain review-only: no authoritative core outputs are written, no promotions are applied to core, no addenda are merged, no post-promotion allocation or calculation reruns are performed, and `safe_for_core_apply` / `ready_for_core_apply` remain false. Full core apply remains a future explicit stage.
+
+Use the topology_ai driver for PR16-PR37 validation. Do not use the old numeric 1-22 evidence_review run for topology/AI validation.
+
+## PR39 — Datasheet Evidence Index and Deterministic Extraction v0
+
+PR39 adds an offline deterministic datasheet evidence index:
+
+```bash
+python scripts/datasheet_evidence_index.py \
+  --project TestProject \
+  --datasheets-dir exports/datasheets \
+  --bom exports/TestProject-bom.json \
+  --missing-data-manifest exports/TestProject-missing-data-manifest.json \
+  --out-dir exports/TestProject/datasheet_evidence_index
+```
+
+Outputs stay under the caller-provided out-dir:
+
+- `datasheet-evidence-index.json`
+- `datasheet-extraction-candidates.json`
+- `datasheet-extraction-status.json`
+- `datasheet-extraction-blockers.json`
+- `datasheet-extraction-review.json`
+
+This stage parses local datasheet text/PDF text extraction output and creates bounded evidence-backed candidates for current, voltage, power, resistance/Rds(on), capacitance/ESR, inductance/saturation current, fuse hold/trip current, connector current, regulator output current, load-switch current limit, and thermal/derating notes.
+
+PR39 does not call AI services, does not require qwen_vision, does not fetch network content, and does not apply extracted candidates directly to core artifacts. Ambiguous ranges, unclear min/typ/max context, unsupported units, and missing evidence become human-review candidates. Connector-wide ratings are not expanded to pins, regulator input/output side is not inferred unless explicitly stated, and missing current is never treated as zero.
+
+PR26 can optionally consume this artifact with `--datasheet-evidence-index` to include bounded evidence snippets in packet context. The packet remains review-only and no candidate is promoted or applied by PR39.
+
+## PR40 — Topology Prerequisite Driver Integration v0
+
+PR40 extends the `topology_ai` driver so it can start from post-conversion TestProject exports before PR16:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr26 \
+  --allow-existing-outputs
+```
+
+The prerequisite stages are:
+
+1. `pre01_locate_post_conversion_exports`
+2. `pre02_topology_map`
+3. `pre03_topology_role_resolution`
+4. `pre04_rail_relationships`
+5. `pre05_copper_net_association`
+6. `pre06_branch_topology`
+7. `pre07_topology_geometry_review`
+8. `pre08_branch_topology_enrichment`
+9. `pr16_calculation_readiness`
+10. `pre09_missing_data_manifest_or_readiness_seed`
+
+PR16 no longer assumes `exports/TestProject-branch-topology-enriched.json` already exists. It consumes the run-dir artifact from `pre08_branch_topology_enrichment/branch-topology-enriched.json`.
+
+The driver searches post-conversion inputs such as `TestProject/post_conversion/TestProject-bom.json`, schematic export, board export, and stack export. Required missing source inputs become explicit blockers. Optional inputs such as conversion reports or images are recorded as warnings, not pre-run blockers.
+
+All newly generated topology prerequisite artifacts stay under `exports/<project>/phase_runs/topology_ai/<run-id>/`. The evidence_review workflow remains unchanged. PR40 does not call AI or qwen_vision, does not fabricate topology/current/rating facts, does not apply AI candidates, and does not write core promotion outputs.
+
+## PR41 — Current Model Seed and Manual Current Input v0
+
+PR41 adds `scripts/current_model_seed.py` and the `pre10_current_model_seed` topology_ai stage before PR19:
+
+```bash
+python scripts/current_model_seed.py \
+  --project TestProject \
+  --branch-topology-enriched exports/TestProject/phase_runs/topology_ai/<run-id>/pre08_branch_topology_enrichment/branch-topology-enriched.json \
+  --missing-data-manifest exports/TestProject/phase_runs/topology_ai/<run-id>/pre09_missing_data_manifest_or_readiness_seed/missing-data-manifest.json \
+  --existing-current-model exports/TestProject-current-model.json \
+  --out exports/TestProject/phase_runs/topology_ai/<run-id>/pre10_current_model_seed/current-model-seed.json
+```
+
+The seed stage copies an explicit current model into the workflow run directory when one exists. If no explicit current model exists, it emits an empty/manual-review current model seed plus a template, status, blockers, and review artifact. Manual placeholders use null current values, require human review, are not usable for allocation, and are ignored by `current_model_ingest.py`.
+
+PR19 now consumes the run-dir `pre10_current_model_seed/current-model-seed.json` instead of requiring `exports/TestProject-current-model.json` before the workflow starts. `current_model_ingest.py` accepts empty/manual seeds without fabricating current values. Current allocation may still block or produce no allocations when there are no usable numeric currents.
+
+PR41 does not call AI, does not require qwen_vision, does not infer current from topology/BOM/rail names, does not treat unknown current as zero, and does not write or apply core artifacts. PR26 packet generation can proceed from the missing-data manifest even when later current/rating stages are blocked.
+
+## PR42 — AI Packet Response Import and Fixture Workflow v0
+
+PR42 adds an offline/manual import step for externally prepared raw AI packet responses:
+
+```bash
+python scripts/ai_packet_response_import.py \
+  --project TestProject \
+  --packet-dir exports/TestProject/phase_runs/topology_ai/<run-id>/pr26_ai_packet_build \
+  --responses-dir path/to/manual/responses \
+  --out-dir exports/TestProject/phase_runs/topology_ai/<run-id>/pr26_ai_packet_response_import
+```
+
+Supported response filenames include `<packet_id>.json`, `<packet_id>_raw_response.json`, `packet_<n>_response.json`, and `<packet_id>/raw_response.json`. Each response must match a real packet in `packet_queue.json`; unknown packet IDs are rejected/reviewed.
+
+The importer writes manifest, status, blockers, review, and index artifacts, then copies matched responses to `pr26_ai_packet_build/packets/<packet_id>/raw_response.json` for PR27 validation. It records source and imported SHA-256 hashes and never mutates source response files.
+
+The `topology_ai` driver now has `pr26_ai_packet_response_import` between PR26 and PR27. Default behavior is unchanged: without `--responses-dir` or fixture responses, PR27 blocks on missing raw responses. With `--responses-dir`, the driver imports responses before PR27. `--allow-partial-responses` permits subset imports while reporting missing packets.
+
+PR42 does not call AI, does not require qwen_vision, does not fabricate response content, does not synthesize accepted extraction results, and does not apply candidates or write core artifacts.

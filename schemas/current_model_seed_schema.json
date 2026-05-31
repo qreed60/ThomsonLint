@@ -1,0 +1,192 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThomsonLint current model seed artifacts",
+  "oneOf": [
+    { "$ref": "#/definitions/seed" },
+    { "$ref": "#/definitions/template" },
+    { "$ref": "#/definitions/status" },
+    { "$ref": "#/definitions/blockers" },
+    { "$ref": "#/definitions/review" }
+  ],
+  "definitions": {
+    "safety": {
+      "type": "object",
+      "required": [
+        "generated_current_values",
+        "inferred_current_values",
+        "unknown_current_treated_as_zero",
+        "requires_human_review",
+        "safe_for_allocation",
+        "safe_for_core_apply",
+        "ready_for_core_apply"
+      ],
+      "properties": {
+        "generated_current_values": { "const": false },
+        "inferred_current_values": { "const": false },
+        "unknown_current_treated_as_zero": { "const": false },
+        "requires_human_review": { "type": "boolean" },
+        "safe_for_allocation": { "type": "boolean" },
+        "safe_for_core_apply": { "const": false },
+        "ready_for_core_apply": { "const": false }
+      }
+    },
+    "base": {
+      "type": "object",
+      "required": ["schema_version", "project"],
+      "properties": {
+        "schema_version": { "type": "string" },
+        "generated_at_utc": { "type": "string" },
+        "project": { "type": "string" }
+      }
+    },
+    "current_array": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "placeholder": {
+      "type": "object",
+      "required": [
+        "placeholder_id",
+        "target_type",
+        "target_identity",
+        "parameter_name",
+        "value_raw",
+        "value_normalized",
+        "unit_raw",
+        "unit_normalized",
+        "current_status",
+        "reason",
+        "requires_human_review",
+        "usable_for_allocation",
+        "usable_for_direct_ingestion",
+        "unknown_current_treated_as_zero"
+      ],
+      "properties": {
+        "placeholder_id": { "type": "string" },
+        "target_type": { "type": "string" },
+        "target_identity": { "type": "string" },
+        "parameter_name": { "const": "current" },
+        "value_raw": { "type": "null" },
+        "value_normalized": { "type": "null" },
+        "unit_raw": { "type": "null" },
+        "unit_normalized": { "type": "null" },
+        "current_status": { "const": "unknown" },
+        "reason": { "type": "string" },
+        "requires_human_review": { "const": true },
+        "usable_for_allocation": { "const": false },
+        "usable_for_direct_ingestion": { "const": false },
+        "unknown_current_treated_as_zero": { "const": false }
+      }
+    },
+    "seed": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["branch_currents", "rail_currents", "component_currents", "ratings"],
+          "properties": {
+            "artifact_type": { "const": "current_model_seed" },
+            "branch_currents": { "$ref": "#/definitions/current_array" },
+            "rail_currents": { "$ref": "#/definitions/current_array" },
+            "component_currents": { "$ref": "#/definitions/current_array" },
+            "ratings": { "$ref": "#/definitions/current_array" },
+            "manual_review_placeholders": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/placeholder" }
+            },
+            "generated_current_values": { "const": false },
+            "inferred_current_values": { "const": false },
+            "unknown_current_treated_as_zero": { "const": false },
+            "safe_for_core_apply": { "const": false },
+            "ready_for_core_apply": { "const": false },
+            "current_model_seed_metadata": {
+              "allOf": [
+                { "$ref": "#/definitions/safety" },
+                {
+                  "type": "object",
+                  "required": ["artifact_type", "source", "source_file"],
+                  "properties": {
+                    "artifact_type": { "const": "current_model_seed" },
+                    "source": { "const": "existing_current_model" },
+                    "source_file": { "type": "string" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "template": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        { "$ref": "#/definitions/safety" },
+        {
+          "type": "object",
+          "required": ["artifact_type", "branch_currents", "rail_currents", "component_currents", "ratings", "manual_review_placeholders"],
+          "properties": {
+            "artifact_type": { "const": "current_model_template" },
+            "branch_currents": { "$ref": "#/definitions/current_array" },
+            "rail_currents": { "$ref": "#/definitions/current_array" },
+            "component_currents": { "$ref": "#/definitions/current_array" },
+            "ratings": { "$ref": "#/definitions/current_array" },
+            "manual_review_placeholders": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/placeholder" }
+            }
+          }
+        }
+      ]
+    },
+    "status": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        { "$ref": "#/definitions/safety" },
+        {
+          "type": "object",
+          "required": ["artifact_type", "status", "reason", "source", "explicit_numeric_record_count", "manual_review_placeholder_count"],
+          "properties": {
+            "artifact_type": { "const": "current_model_seed_status" },
+            "status": { "enum": ["passed", "blocked"] },
+            "reason": { "type": "string" },
+            "source": { "enum": ["existing_current_model", "manual_review_seed"] },
+            "explicit_numeric_record_count": { "type": "integer", "minimum": 0 },
+            "manual_review_placeholder_count": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "blockers": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        { "$ref": "#/definitions/safety" },
+        {
+          "type": "object",
+          "required": ["artifact_type", "blockers"],
+          "properties": {
+            "artifact_type": { "const": "current_model_seed_blockers" },
+            "blockers": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      ]
+    },
+    "review": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        { "$ref": "#/definitions/safety" },
+        {
+          "type": "object",
+          "required": ["artifact_type", "review_items", "review_item_count"],
+          "properties": {
+            "artifact_type": { "const": "current_model_seed_review" },
+            "review_items": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/placeholder" }
+            },
+            "review_item_count": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    }
+  }
+}

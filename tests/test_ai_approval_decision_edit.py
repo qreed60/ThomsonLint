@@ -269,6 +269,22 @@ def test_decision_template_writes_expected_shape(tmp_path: Path) -> None:
     assert required_keys.issubset(set(artifact.keys()))
 
 
+def test_decision_template_also_writes_validation_artifact(tmp_path: Path) -> None:
+    approval_queue_fixture(tmp_path)
+    promo_dir = tmp_path / "exports" / "TestProject" / "ai_promotion"
+
+    result = run_editor("--project", "TestProject", "--promotion-dir", str(promo_dir), "--decision-template")
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    validation = read_json(promo_dir / "ai-approval-decision-validation.json")
+    decisions = read_json(promo_dir / "ai-approval-decisions.json")
+    assert validation["source_decisions"] == str(promo_dir / "ai-approval-decisions.json")
+    assert validation["validation_pass"] is True
+    assert validation["summary"]["invalid_decision_count"] == 0
+    assert all(item["safe_to_apply"] is False for item in decisions["decisions"])
+    assert all(item["safe_for_future_apply_stage"] is False for item in validation["validated_decisions"])
+
+
 def test_validation_writes_expected_shape(tmp_path: Path) -> None:
     approval_queue_fixture(tmp_path)
     decisions_fixture(tmp_path)
