@@ -1074,3 +1074,36 @@ Use topology_ai for topology/current/rating/calculation and AI-assisted candidat
 topology_ai deterministic stages are run directly by the driver, not routed through OpenHands. PR26 creates prompt-ready packets only and does not call AI. Missing raw AI responses block PR27 and skip/block PR28-PR37 unless fixture or existing-artifact mode is explicitly requested.
 
 PR26-PR37 outputs are isolated under the workflow run directory and remain review-only. The driver must not apply promotions to core, merge addenda, run post-promotion allocation/calculation reruns, or set `safe_for_core_apply` / `ready_for_core_apply` true. qwen_vision may be reported as configured from environment routing, but it is not invoked unless an implemented script actually invokes it.
+
+### PR39 Datasheet Evidence Index Rules
+
+PR39 is an offline deterministic extraction stage:
+
+```bash
+python scripts/datasheet_evidence_index.py \
+  --project TestProject \
+  --datasheets-dir exports/datasheets \
+  --out-dir exports/TestProject/datasheet_evidence_index
+```
+
+It may parse local text datasheets and local PDF text extraction output. It must not call AI services, require qwen_vision, fetch network content, mutate source datasheets, write core current/rating/topology artifacts, or emit findings/pass-fail/compliance conclusions.
+
+Every candidate must carry source file, page when available, evidence quote, extraction method, and confidence. Missing or ambiguous values must route to human review rather than accepted facts. Do not infer connector pin ratings from connector-wide ratings, do not infer regulator input/output side unless explicitly stated, and do not treat missing current as zero.
+
+PR39 candidates are evidence-backed context for review and PR26 packet quality. They are not directly applied to core artifacts.
+
+### PR40 Topology Prerequisite Driver Rules
+
+PR40 adds deterministic prerequisite generation/location before PR16 in the `topology_ai` driver:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr26 \
+  --allow-existing-outputs
+```
+
+The driver consumes post-conversion exports when available and writes prerequisite artifacts only under the workflow run directory. PR16 must consume the run-dir branch topology enriched artifact, not assume `exports/TestProject-branch-topology-enriched.json` already exists.
+
+The old evidence_review numeric phase driver remains valid. PR40 does not call AI services, does not require qwen_vision, does not fabricate topology/current/rating facts, does not apply AI candidates to core, and does not write core promotion outputs.

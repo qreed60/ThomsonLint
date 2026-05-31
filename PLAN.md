@@ -1126,3 +1126,61 @@ PR26 builds prompt-ready packets only. Missing raw AI responses block PR27 and c
 PR26-PR37 remain review-only: no authoritative core outputs are written, no promotions are applied to core, no addenda are merged, no post-promotion allocation or calculation reruns are performed, and `safe_for_core_apply` / `ready_for_core_apply` remain false. Full core apply remains a future explicit stage.
 
 Use the topology_ai driver for PR16-PR37 validation. Do not use the old numeric 1-22 evidence_review run for topology/AI validation.
+
+## PR39 — Datasheet Evidence Index and Deterministic Extraction v0
+
+PR39 adds an offline deterministic datasheet evidence index:
+
+```bash
+python scripts/datasheet_evidence_index.py \
+  --project TestProject \
+  --datasheets-dir exports/datasheets \
+  --bom exports/TestProject-bom.json \
+  --missing-data-manifest exports/TestProject-missing-data-manifest.json \
+  --out-dir exports/TestProject/datasheet_evidence_index
+```
+
+Outputs stay under the caller-provided out-dir:
+
+- `datasheet-evidence-index.json`
+- `datasheet-extraction-candidates.json`
+- `datasheet-extraction-status.json`
+- `datasheet-extraction-blockers.json`
+- `datasheet-extraction-review.json`
+
+This stage parses local datasheet text/PDF text extraction output and creates bounded evidence-backed candidates for current, voltage, power, resistance/Rds(on), capacitance/ESR, inductance/saturation current, fuse hold/trip current, connector current, regulator output current, load-switch current limit, and thermal/derating notes.
+
+PR39 does not call AI services, does not require qwen_vision, does not fetch network content, and does not apply extracted candidates directly to core artifacts. Ambiguous ranges, unclear min/typ/max context, unsupported units, and missing evidence become human-review candidates. Connector-wide ratings are not expanded to pins, regulator input/output side is not inferred unless explicitly stated, and missing current is never treated as zero.
+
+PR26 can optionally consume this artifact with `--datasheet-evidence-index` to include bounded evidence snippets in packet context. The packet remains review-only and no candidate is promoted or applied by PR39.
+
+## PR40 — Topology Prerequisite Driver Integration v0
+
+PR40 extends the `topology_ai` driver so it can start from post-conversion TestProject exports before PR16:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr26 \
+  --allow-existing-outputs
+```
+
+The prerequisite stages are:
+
+1. `pre01_locate_post_conversion_exports`
+2. `pre02_topology_map`
+3. `pre03_topology_role_resolution`
+4. `pre04_rail_relationships`
+5. `pre05_copper_net_association`
+6. `pre06_branch_topology`
+7. `pre07_topology_geometry_review`
+8. `pre08_branch_topology_enrichment`
+9. `pr16_calculation_readiness`
+10. `pre09_missing_data_manifest_or_readiness_seed`
+
+PR16 no longer assumes `exports/TestProject-branch-topology-enriched.json` already exists. It consumes the run-dir artifact from `pre08_branch_topology_enrichment/branch-topology-enriched.json`.
+
+The driver searches post-conversion inputs such as `TestProject/post_conversion/TestProject-bom.json`, schematic export, board export, and stack export. Required missing source inputs become explicit blockers. Optional inputs such as conversion reports or images are recorded as warnings, not pre-run blockers.
+
+All newly generated topology prerequisite artifacts stay under `exports/<project>/phase_runs/topology_ai/<run-id>/`. The evidence_review workflow remains unchanged. PR40 does not call AI or qwen_vision, does not fabricate topology/current/rating facts, does not apply AI candidates, and does not write core promotion outputs.

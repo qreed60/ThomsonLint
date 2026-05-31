@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThomsonLint datasheet evidence index artifacts",
+  "oneOf": [
+    { "$ref": "#/definitions/index" },
+    { "$ref": "#/definitions/candidates" },
+    { "$ref": "#/definitions/status" },
+    { "$ref": "#/definitions/blockers" },
+    { "$ref": "#/definitions/review" }
+  ],
+  "definitions": {
+    "base": {
+      "type": "object",
+      "required": ["artifact_type", "schema_version", "generated_at_utc", "project", "summary", "warnings", "errors"],
+      "properties": {
+        "artifact_type": { "type": "string" },
+        "schema_version": { "type": "string" },
+        "generated_at_utc": { "type": "string" },
+        "project": { "type": "string" },
+        "summary": { "type": "object" },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "errors": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "required": [
+        "candidate_id",
+        "target_type",
+        "target_identity",
+        "parameter_name",
+        "value_raw",
+        "value_normalized",
+        "unit_raw",
+        "unit_normalized",
+        "condition",
+        "source_file",
+        "page",
+        "evidence_quote",
+        "extraction_method",
+        "confidence",
+        "requires_human_review",
+        "usable_for_ai_packet_context",
+        "usable_for_direct_ingestion"
+      ],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "target_type": { "type": ["string", "null"] },
+        "target_identity": { "type": ["string", "null"] },
+        "parameter_name": { "type": "string", "minLength": 1 },
+        "value_raw": { "type": "string" },
+        "value_normalized": { "type": ["number", "null"] },
+        "unit_raw": { "type": "string" },
+        "unit_normalized": { "type": ["string", "null"] },
+        "condition": { "type": ["string", "null"] },
+        "source_file": { "type": "string" },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "evidence_quote": { "type": "string" },
+        "extraction_method": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "requires_human_review": { "type": "boolean" },
+        "usable_for_ai_packet_context": { "type": "boolean" },
+        "usable_for_direct_ingestion": { "const": false },
+        "warnings": { "type": "array", "items": { "type": ["string", "null"] } }
+      },
+      "additionalProperties": true
+    },
+    "index": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["source_artifacts", "documents"],
+          "properties": {
+            "artifact_type": { "const": "datasheet_evidence_index" },
+            "source_artifacts": { "type": "object" },
+            "documents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "source_file",
+                  "file_sha256",
+                  "page_count",
+                  "extracted_text_available",
+                  "extracted_tables_available",
+                  "extraction_warnings",
+                  "page_evidence_blocks",
+                  "section_candidates"
+                ],
+                "properties": {
+                  "source_file": { "type": "string" },
+                  "file_sha256": { "type": "string", "minLength": 64, "maxLength": 64 },
+                  "page_count": { "type": ["integer", "null"], "minimum": 0 },
+                  "extracted_text_available": { "type": "boolean" },
+                  "extracted_tables_available": { "type": "boolean" },
+                  "extraction_warnings": { "type": "array", "items": { "type": "string" } },
+                  "page_evidence_blocks": { "type": "array", "items": { "type": "object" } },
+                  "section_candidates": { "type": "array", "items": { "type": "object" } }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "candidates": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["source_artifacts", "candidates"],
+          "properties": {
+            "artifact_type": { "const": "datasheet_extraction_candidates" },
+            "source_artifacts": { "type": "object" },
+            "candidates": { "type": "array", "items": { "$ref": "#/definitions/candidate" } }
+          }
+        }
+      ]
+    },
+    "status": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["status", "strict", "source_artifacts", "execution_pass"],
+          "properties": {
+            "artifact_type": { "const": "datasheet_extraction_status" },
+            "status": { "enum": ["passed", "blocked"] },
+            "strict": { "type": "boolean" },
+            "source_artifacts": { "type": "object" },
+            "execution_pass": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "blockers": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["blockers"],
+          "properties": {
+            "artifact_type": { "const": "datasheet_extraction_blockers" },
+            "blockers": { "type": "array", "items": { "type": "object" } }
+          }
+        }
+      ]
+    },
+    "review": {
+      "allOf": [
+        { "$ref": "#/definitions/base" },
+        {
+          "type": "object",
+          "required": ["human_review_candidates", "review_notes"],
+          "properties": {
+            "artifact_type": { "const": "datasheet_extraction_review" },
+            "human_review_candidates": { "type": "array", "items": { "$ref": "#/definitions/candidate" } },
+            "review_notes": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      ]
+    }
+  }
+}
