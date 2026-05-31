@@ -66,6 +66,11 @@ def fake_run_creating_outputs(command: list[str], **_: Any) -> subprocess.Comple
         power = Path(command[command.index("--power-out") + 1])
         power.parent.mkdir(parents=True, exist_ok=True)
         power.write_text("{}", encoding="utf-8")
+    for flag in ["--template-out", "--status-out", "--blockers-out", "--review-out"]:
+        if flag in command:
+            path = Path(command[command.index(flag) + 1])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}", encoding="utf-8")
     if "--out-dir" in command:
         out_dir = Path(command[command.index("--out-dir") + 1])
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -120,6 +125,7 @@ def test_topology_ai_dry_run_order_and_no_subprocess(tmp_path: Path, monkeypatch
         "pre08_branch_topology_enrichment",
         "pr16_calculation_readiness",
         "pre09_missing_data_manifest_or_readiness_seed",
+        "pre10_current_model_seed",
         "pr17_schema_available",
         "pr18_copper_calculation",
         "pr19_current_model_ingest",
@@ -144,14 +150,15 @@ def test_topology_ai_dry_run_order_and_no_subprocess(tmp_path: Path, monkeypatch
     ]
     assert rows[0]["command"] == []
     assert rows[9]["script"] == "missing_data_manifest.py"
-    assert rows[10]["command"] == []
-    assert rows[10]["status"] == "not_applicable"
-    assert rows[15]["script"] == "topology_copper_calculate.py"
-    assert rows[15]["stage_kind"] == "copper_via"
-    assert rows[16]["phase_id"] == "pr23_rating_model_ingest"
-    assert rows[17]["script"] == "topology_margin_calculate.py"
+    assert rows[10]["script"] == "current_model_seed.py"
+    assert rows[11]["command"] == []
+    assert rows[11]["status"] == "not_applicable"
+    assert rows[16]["script"] == "topology_copper_calculate.py"
+    assert rows[16]["stage_kind"] == "copper_via"
+    assert rows[17]["phase_id"] == "pr23_rating_model_ingest"
     assert rows[18]["script"] == "topology_margin_calculate.py"
-    assert "outputs/artifacts" in rows[23]["reason"]
+    assert rows[19]["script"] == "topology_margin_calculate.py"
+    assert "outputs/artifacts" in rows[24]["reason"]
 
 
 def test_missing_raw_ai_blocks_pr27_and_later_without_fabrication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -291,6 +298,56 @@ def test_downstream_pr18_blocks_on_missing_previous_stage_output(tmp_path: Path,
     assert rows[-1]["phase_id"] == "pr18_copper_calculation"
     assert rows[-1]["status"] == "blocked_missing_input"
     assert str(out_dir / "pr16_calculation_readiness" / "calculation-readiness-inventory.json") in rows[-1]["input_paths"]
+
+
+def test_pr19_uses_run_dir_current_model_seed_not_exports_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--start", "pre01", "--end", "pr19", "--out-dir", str(out_dir), "--allow-existing-outputs"])
+    assert result == 0
+    rows = stage_results(out_dir)
+    pre10 = next(row for row in rows if row["phase_id"] == "pre10_current_model_seed")
+    pr19 = next(row for row in rows if row["phase_id"] == "pr19_current_model_ingest")
+    seed = out_dir / "pre10_current_model_seed" / "current-model-seed.json"
+    assert str(seed) in pre10["output_paths"]
+    assert str(seed) in pr19["command"]
+    assert str(fake_root / "exports" / "TestProject-current-model.json") not in pr19["input_paths"]
+    assert "exports/TestProject-current-model.json" not in " ".join(pr19["command"])
+
+
+def test_missing_exports_current_model_no_longer_blocks_pr19(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--start", "pre01", "--end", "pr19", "--out-dir", str(out_dir), "--allow-existing-outputs"])
+    assert result == 0
+    pr19 = next(row for row in stage_results(out_dir) if row["phase_id"] == "pr19_current_model_ingest")
+    assert pr19["status"] == "passed"
+    assert all("TestProject-current-model.json" not in path for path in pr19["input_paths"])
+
+
+def test_pr26_can_run_from_missing_data_manifest_after_current_blocker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    manifest = out_dir / "pre09_missing_data_manifest_or_readiness_seed" / "missing-data-manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+    result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--start", "pr20", "--end", "pr26", "--out-dir", str(out_dir), "--allow-existing-outputs"])
+    assert result == 0
+    rows = stage_results(out_dir)
+    pr20 = next(row for row in rows if row["phase_id"] == "pr20_current_allocation")
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    assert pr20["status"] == "blocked_missing_input"
+    assert pr26["status"] == "passed"
+    assert (out_dir / "pr26_ai_packet_build" / "packet_queue.json").exists()
 
 
 def test_stage_results_include_required_fields(tmp_path: Path) -> None:

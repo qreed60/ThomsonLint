@@ -420,6 +420,11 @@ def normalize_current_model(
 
     normalized: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    manual_placeholders = [row for row in as_list(current_model.get("manual_review_placeholders")) if isinstance(row, dict)]
+    if manual_placeholders:
+        warnings.append(
+            f"ignored {len(manual_placeholders)} manual-review current placeholder(s); placeholders are not explicit current values"
+        )
     source_index = 0
     input_record_count = 0
     for rows, normalizer in (
@@ -460,6 +465,7 @@ def normalize_current_model(
         "rail_current_count": sum(1 for record in normalized if record.get("record_type") == "rail_current"),
         "component_current_count": sum(1 for record in normalized if record.get("record_type") == "component_current"),
         "rating_count": sum(1 for record in normalized if record.get("record_type") == "rating"),
+        "manual_review_placeholder_count": len(manual_placeholders),
         "directly_usable_branch_current_count": sum(1 for record in normalized if record.get("record_type") == "branch_current" and record.get("usable_for_calculation") is True),
         "human_review_count": sum(1 for record in normalized if record.get("human_review_needed") is True),
         "unresolved_reference_count": len(unresolved_references),

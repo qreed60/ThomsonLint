@@ -1107,3 +1107,17 @@ PR40 adds deterministic prerequisite generation/location before PR16 in the `top
 The driver consumes post-conversion exports when available and writes prerequisite artifacts only under the workflow run directory. PR16 must consume the run-dir branch topology enriched artifact, not assume `exports/TestProject-branch-topology-enriched.json` already exists.
 
 The old evidence_review numeric phase driver remains valid. PR40 does not call AI services, does not require qwen_vision, does not fabricate topology/current/rating facts, does not apply AI candidates to core, and does not write core promotion outputs.
+
+### PR41 Current Model Seed Rules
+
+PR41 adds `pre10_current_model_seed` before PR19 in the `topology_ai` driver. The stage runs `scripts/current_model_seed.py` and writes:
+
+- `current-model-seed.json`
+- `current-model-template.json`
+- `current-model-seed-status.json`
+- `current-model-seed-blockers.json`
+- `current-model-seed-review.json`
+
+If `exports/TestProject-current-model.json` exists, it is copied/indexed into the run directory and preserved as the explicit current source. If it is missing, the stage creates an empty/manual-review seed with placeholders only. Placeholders must use null current values, require human review, and remain unusable for allocation.
+
+PR19 must consume the run-dir seed artifact, not hardcode the export-root current model. Unknown current is never zero, and no current may be inferred from BOM, topology, rail names, or package assumptions. PR26 packet generation may proceed from the missing-data manifest even when current/rating calculation stages are blocked. PR41 does not call AI or qwen_vision and does not write or apply core artifacts.

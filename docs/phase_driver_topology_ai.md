@@ -1,6 +1,6 @@
 # Phase Driver Topology AI Workflow
 
-PR38 added a workflow-aware phase driver layer for the topology/current/rating/calculation and AI-assisted candidate workflow. PR40 adds deterministic prerequisite generation/location before PR16.
+PR38 added a workflow-aware phase driver layer for the topology/current/rating/calculation and AI-assisted candidate workflow. PR40 adds deterministic prerequisite generation/location before PR16. PR41 adds a run-local current model seed/template before PR19.
 
 The original phase driver covered only the evidence_review workflow, using numeric phases 1-22 and OpenHands phase prompts. That workflow remains valid:
 
@@ -35,6 +35,10 @@ PR40 consumes post-conversion exports when available, especially:
 
 PR16 no longer assumes `exports/TestProject-branch-topology-enriched.json` already exists. It consumes the branch topology enriched artifact generated or located in the current workflow run directory.
 
+PR41 means the workflow no longer requires `exports/TestProject-current-model.json` to exist before PR19. `pre10_current_model_seed` copies an explicit current model into the run directory when one exists; otherwise it creates an empty/manual-review seed. PR19 consumes that run-local seed. Unknown current remains unknown, not zero, and current allocation may still block or produce no allocations when there are no usable numeric current records.
+
+PR26 packet generation can run from the missing-data manifest even if current/rating allocation or margin stages are blocked. It remains prompt scaffolding only.
+
 PR26 builds prompt-ready packet scaffolding only. It does not call AI services, does not invoke qwen_vision, and does not fabricate raw AI extraction responses. The driver records qwen_vision as configured only when the environment indicates a qwen vision model; `qwen_vision_invoked` remains false unless an implemented script actually invokes it.
 
 After PR26, the driver checks for saved raw AI response artifacts. If they are missing, PR27 is marked `blocked_missing_input` and PR28-PR37 are skipped with a blocker reference. Existing or fixture AI artifacts are considered only when explicitly requested with `--fixtures-dir` or `--continue-with-existing-ai-artifacts`.
@@ -53,27 +57,28 @@ PR26-PR37 remain isolated and review-only. The driver does not write candidate o
 8. `pre08_branch_topology_enrichment`
 9. `pr16_calculation_readiness`
 10. `pre09_missing_data_manifest_or_readiness_seed`
-11. `pr17_schema_available`
-12. `pr18_copper_calculation`
-13. `pr19_current_model_ingest`
-14. `pr20_current_allocation`
-15. `pr21_copper_with_allocated_current`
-16. `pr22_via_current_density`
-17. `pr23_rating_model_ingest`
-18. `pr24_fuse_margin`
-19. `pr25_connector_pin_margin`
-20. `pr26_ai_packet_build`
-21. `pr27_ai_extraction_validate`
-22. `pr28_ai_patch_build`
-23. `pr29_ai_candidate_materialize`
-24. `pr30_ai_candidate_adapter_outputs`
-25. `pr31_ai_candidate_ingest`
-26. `pr32_ai_promotion_plan`
-27. `pr33_ai_approval_decisions`
-28. `pr34_ai_promotion_apply_dry_run`
-29. `pr35_ai_candidate_core_input_apply`
-30. `pr36_ai_candidate_core_input_ingest`
-31. `pr37_ai_candidate_normalized_review`
+11. `pre10_current_model_seed`
+12. `pr17_schema_available`
+13. `pr18_copper_calculation`
+14. `pr19_current_model_ingest`
+15. `pr20_current_allocation`
+16. `pr21_copper_with_allocated_current`
+17. `pr22_via_current_density`
+18. `pr23_rating_model_ingest`
+19. `pr24_fuse_margin`
+20. `pr25_connector_pin_margin`
+21. `pr26_ai_packet_build`
+22. `pr27_ai_extraction_validate`
+23. `pr28_ai_patch_build`
+24. `pr29_ai_candidate_materialize`
+25. `pr30_ai_candidate_adapter_outputs`
+26. `pr31_ai_candidate_ingest`
+27. `pr32_ai_promotion_plan`
+28. `pr33_ai_approval_decisions`
+29. `pr34_ai_promotion_apply_dry_run`
+30. `pr35_ai_candidate_core_input_apply`
+31. `pr36_ai_candidate_core_input_ingest`
+32. `pr37_ai_candidate_normalized_review`
 
 PR22 is copper/via current-density behavior, not margin behavior. PR23 rating ingestion occurs before PR24 and PR25 margins. PR30 creates adapter outputs/artifacts, not adapter scripts.
 
@@ -109,4 +114,4 @@ Required safety booleans are fixed as:
 
 ## Guidance
 
-Use the topology_ai driver for PR16-PR37 validation. Do not use the old numeric 1-22 evidence_review run for topology/AI validation. The prerequisite integration does not call AI or qwen_vision and does not apply AI candidates or write core promotion outputs.
+Use the topology_ai driver for PR16-PR37 validation. Do not use the old numeric 1-22 evidence_review run for topology/AI validation. The prerequisite and current seed integrations do not call AI or qwen_vision, do not infer current, and do not apply AI candidates or write core promotion outputs.

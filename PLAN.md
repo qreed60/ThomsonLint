@@ -1184,3 +1184,22 @@ PR16 no longer assumes `exports/TestProject-branch-topology-enriched.json` alrea
 The driver searches post-conversion inputs such as `TestProject/post_conversion/TestProject-bom.json`, schematic export, board export, and stack export. Required missing source inputs become explicit blockers. Optional inputs such as conversion reports or images are recorded as warnings, not pre-run blockers.
 
 All newly generated topology prerequisite artifacts stay under `exports/<project>/phase_runs/topology_ai/<run-id>/`. The evidence_review workflow remains unchanged. PR40 does not call AI or qwen_vision, does not fabricate topology/current/rating facts, does not apply AI candidates, and does not write core promotion outputs.
+
+## PR41 — Current Model Seed and Manual Current Input v0
+
+PR41 adds `scripts/current_model_seed.py` and the `pre10_current_model_seed` topology_ai stage before PR19:
+
+```bash
+python scripts/current_model_seed.py \
+  --project TestProject \
+  --branch-topology-enriched exports/TestProject/phase_runs/topology_ai/<run-id>/pre08_branch_topology_enrichment/branch-topology-enriched.json \
+  --missing-data-manifest exports/TestProject/phase_runs/topology_ai/<run-id>/pre09_missing_data_manifest_or_readiness_seed/missing-data-manifest.json \
+  --existing-current-model exports/TestProject-current-model.json \
+  --out exports/TestProject/phase_runs/topology_ai/<run-id>/pre10_current_model_seed/current-model-seed.json
+```
+
+The seed stage copies an explicit current model into the workflow run directory when one exists. If no explicit current model exists, it emits an empty/manual-review current model seed plus a template, status, blockers, and review artifact. Manual placeholders use null current values, require human review, are not usable for allocation, and are ignored by `current_model_ingest.py`.
+
+PR19 now consumes the run-dir `pre10_current_model_seed/current-model-seed.json` instead of requiring `exports/TestProject-current-model.json` before the workflow starts. `current_model_ingest.py` accepts empty/manual seeds without fabricating current values. Current allocation may still block or produce no allocations when there are no usable numeric currents.
+
+PR41 does not call AI, does not require qwen_vision, does not infer current from topology/BOM/rail names, does not treat unknown current as zero, and does not write or apply core artifacts. PR26 packet generation can proceed from the missing-data manifest even when later current/rating stages are blocked.

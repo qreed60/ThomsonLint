@@ -150,6 +150,37 @@ def _missing_manifest(paths: TopologyPaths) -> Path:
     return fixture if fixture and fixture.exists() else paths.stage_file("pre09_missing_data_manifest_or_readiness_seed", "missing-data-manifest.json")
 
 
+def _current_model_seed(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre10_current_model_seed", "current-model-seed.json")
+
+
+def _current_model_template(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre10_current_model_seed", "current-model-template.json")
+
+
+def _current_model_seed_status(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre10_current_model_seed", "current-model-seed-status.json")
+
+
+def _current_model_seed_blockers(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre10_current_model_seed", "current-model-seed-blockers.json")
+
+
+def _current_model_seed_review(paths: TopologyPaths) -> Path:
+    return paths.stage_file("pre10_current_model_seed", "current-model-seed-review.json")
+
+
+def _existing_current_model(paths: TopologyPaths) -> Path:
+    if paths.fixtures_dir:
+        for candidate in (
+            paths.fixtures_dir / f"{paths.project}-current-model.json",
+            paths.fixtures_dir / "current-model.json",
+        ):
+            if candidate.exists():
+                return candidate
+    return paths.core("current-model.json")
+
+
 def _packet_dir(paths: TopologyPaths) -> Path:
     return paths.stage_dir("pr26_ai_packet_build")
 
@@ -355,6 +386,37 @@ def _cmd_pr16(paths: TopologyPaths) -> list[str]:
     ]
 
 
+def _cmd_pre10(paths: TopologyPaths) -> list[str]:
+    return [
+        *_py(paths, "current_model_seed.py"),
+        "--project",
+        paths.project,
+        "--branch-topology-enriched",
+        str(_branch_topology_enriched(paths)),
+        "--role-resolution",
+        str(_topology_roles(paths)),
+        "--rail-relationships",
+        str(_rail_relationships(paths)),
+        "--missing-data-manifest",
+        str(_missing_manifest(paths)),
+        "--calculation-readiness",
+        str(_readiness(paths)),
+        "--existing-current-model",
+        str(_existing_current_model(paths)),
+        "--out",
+        str(_current_model_seed(paths)),
+        "--template-out",
+        str(_current_model_template(paths)),
+        "--status-out",
+        str(_current_model_seed_status(paths)),
+        "--blockers-out",
+        str(_current_model_seed_blockers(paths)),
+        "--review-out",
+        str(_current_model_seed_review(paths)),
+        *_strict(paths),
+    ]
+
+
 def _cmd_pr18(paths: TopologyPaths) -> list[str]:
     return [
         *_py(paths, "topology_copper_calculate.py"),
@@ -377,7 +439,7 @@ def _cmd_pr19(paths: TopologyPaths) -> list[str]:
         "--project",
         paths.project,
         "--current-model",
-        str(paths.core("current-model.json")),
+        str(_current_model_seed(paths)),
         "--missing-data-manifest",
         str(_missing_manifest(paths)),
         "--branch-topology-enriched",
@@ -692,9 +754,10 @@ TOPOLOGY_AI_PHASES: tuple[PhaseSpec, ...] = (
     PhaseSpec("pre08_branch_topology_enrichment", 0, "branch topology enrichment", "branch_topology_enrich.py", lambda p: [_branch_topology(p), _topology_roles(p), _rail_relationships(p), _geometry_review(p)], lambda p: [_branch_topology_enriched(p)], _cmd_pre08, "Enrich branch topology with deterministic role, rail, and geometry context."),
     PhaseSpec("pr16_calculation_readiness", 16, "calculation readiness / missing-data inventory", "calculation_readiness_inventory.py", lambda p: [_branch_topology_enriched(p), _topology_roles(p), _rail_relationships(p), _geometry_review(p)], lambda p: [_readiness(p)], _cmd_pr16, "PR16 calculation readiness and missing-data inventory."),
     PhaseSpec("pre09_missing_data_manifest_or_readiness_seed", 0, "missing-data manifest from readiness", "missing_data_manifest.py", lambda p: [_readiness(p), _branch_topology_enriched(p), _topology_roles(p), _rail_relationships(p)], lambda p: [_missing_manifest(p)], _cmd_pre09, "Build missing-data manifest from PR16 readiness before PR18+ and PR26."),
+    PhaseSpec("pre10_current_model_seed", 0, "current model seed/template", "current_model_seed.py", lambda p: [_branch_topology_enriched(p), _missing_manifest(p), _readiness(p)], lambda p: [_current_model_seed(p), _current_model_template(p), _current_model_seed_status(p), _current_model_seed_blockers(p), _current_model_seed_review(p)], _cmd_pre10, "Build or copy a run-local current model seed without inferring current."),
     PhaseSpec("pr17_schema_available", 17, "schema availability check", None, lambda p: [p.repo_root / "schemas" / "calculation_readiness_schema.json", p.repo_root / "schemas" / "calculation_result_schema.json"], lambda p: [], lambda p: None, "PR17 checks schema availability only; it does not execute a command.", "schema_check"),
     PhaseSpec("pr18_copper_calculation", 18, "copper calculations", "topology_copper_calculate.py", lambda p: [_geometry_review(p), _readiness(p), _missing_manifest(p)], lambda p: [p.stage_file("pr18_copper_calculation", "topology-copper-calculations.json")], _cmd_pr18, "PR18 deterministic copper calculations."),
-    PhaseSpec("pr19_current_model_ingest", 19, "current model ingestion", "current_model_ingest.py", lambda p: [p.core("current-model.json"), _missing_manifest(p)], lambda p: [_core_current(p)], _cmd_pr19, "PR19 normalizes explicit current models."),
+    PhaseSpec("pr19_current_model_ingest", 19, "current model ingestion", "current_model_ingest.py", lambda p: [_current_model_seed(p), _missing_manifest(p)], lambda p: [_core_current(p)], _cmd_pr19, "PR19 normalizes explicit current models or accepts an empty manual-review seed."),
     PhaseSpec("pr20_current_allocation", 20, "current allocation", "topology_current_allocate.py", lambda p: [_core_current(p), _branch_topology_enriched(p), _missing_manifest(p), _readiness(p)], lambda p: [_current_allocation(p)], _cmd_pr20, "PR20 allocates explicit normalized current to topology branches."),
     PhaseSpec("pr21_copper_with_allocated_current", 21, "copper path using allocated currents", "topology_copper_calculate.py", lambda p: [_geometry_review(p), _readiness(p), _missing_manifest(p), _current_allocation(p)], lambda p: [p.stage_file("pr21_copper_with_allocated_current", "topology-copper-with-allocated-current.json")], _cmd_pr21, "PR21 reruns copper calculation behavior with allocated currents."),
     PhaseSpec("pr22_via_current_density", 22, "via current density", "topology_copper_calculate.py", lambda p: [_geometry_review(p), _readiness(p), _missing_manifest(p), _current_allocation(p)], lambda p: [p.stage_file("pr22_via_current_density", "topology-via-current-density.json")], _cmd_pr22, "PR22 is copper/via current-density behavior, not margin behavior.", "copper_via"),

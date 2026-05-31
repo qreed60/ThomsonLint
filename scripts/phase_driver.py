@@ -264,7 +264,7 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
                 )
             continue
 
-        if cascade_blocker_id:
+        if cascade_blocker_id and phase.stage_kind != "ai_packet":
             results.append(
                 stage_record(
                     phase,
