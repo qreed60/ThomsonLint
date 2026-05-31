@@ -325,6 +325,23 @@ def test_pr33_real_script_advances_to_pr34_without_path_containment_error(tmp_pa
     assert read_json(out_dir / "phase-driver-manifest.json")["ready_for_core_apply"] is False
 
 
+def test_pr33_uses_explicit_approval_decisions_when_provided(tmp_path: Path) -> None:
+    approval_decisions = tmp_path / "approval-decisions.json"
+    approval_decisions.write_text("{}", encoding="utf-8")
+    out_dir = run_driver(tmp_path, "--start", "pr33", "--end", "pr34", "--dry-run", "--approval-decisions", str(approval_decisions))
+    rows = stage_results(out_dir)
+    pr33 = next(row for row in rows if row["phase_id"] == "pr33_ai_approval_decisions")
+    decisions = out_dir / "pr32_ai_promotion_plan" / "ai-approval-decisions.json"
+    validation = out_dir / "pr32_ai_promotion_plan" / "ai-approval-decision-validation.json"
+
+    assert str(approval_decisions) in pr33["input_paths"]
+    assert "--decision-template" not in pr33["command"]
+    assert pr33["command"][pr33["command"].index("--decisions") + 1] == str(approval_decisions)
+    assert "--validate-only" in pr33["command"]
+    assert pr33["command"][pr33["command"].index("--out") + 1] == str(decisions)
+    assert pr33["command"][pr33["command"].index("--validate-out") + 1] == str(validation)
+
+
 def test_qwen_vision_reporting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("THOMSONLINT_VISION_MODEL", "qwen_vision")
     out_dir = run_driver(tmp_path, "--dry-run")

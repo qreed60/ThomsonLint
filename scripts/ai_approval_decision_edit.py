@@ -701,6 +701,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: malformed decisions file: {exc}", file=sys.stderr)
         return 2
 
+    validation_decisions_path = decisions_path
+    if args.out and decisions_out != decisions_path:
+        write_json(decisions_out, decisions_data)
+        validation_decisions_path = decisions_out
+
     validation_artifact = validate_decisions(
         decisions_data,
         approval_queue_data,
@@ -708,7 +713,7 @@ def main(argv: list[str] | None = None) -> int:
         strict=args.strict,
         promotion_status_data=promotion_status_data if promotion_status_data else {},
     )
-    validation_artifact["source_decisions"] = str(decisions_path)
+    validation_artifact["source_decisions"] = str(validation_decisions_path)
 
     write_json(validate_out, validation_artifact)
     summary = validation_artifact.get("summary", {})

@@ -208,6 +208,7 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         fixtures_dir=Path(args.fixtures_dir).resolve() if args.fixtures_dir else None,
         responses_dir=Path(args.responses_dir).resolve() if args.responses_dir else None,
+        approval_decisions=Path(args.approval_decisions).resolve() if args.approval_decisions else None,
         allow_partial_responses=args.allow_partial_responses,
     )
     blockers: list[dict[str, Any]] = []
@@ -434,6 +435,7 @@ def write_run_artifacts(
             "allow_existing_outputs": args.allow_existing_outputs,
             "fixtures_dir": args.fixtures_dir,
             "responses_dir": args.responses_dir,
+            "approval_decisions": args.approval_decisions,
             "allow_partial_responses": args.allow_partial_responses,
             "continue_with_existing_ai_artifacts": args.continue_with_existing_ai_artifacts,
             "stop_at_missing_ai": args.stop_at_missing_ai,
@@ -576,6 +578,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--allow-existing-outputs", action="store_true")
     parser.add_argument("--fixtures-dir")
     parser.add_argument("--responses-dir")
+    parser.add_argument("--approval-decisions")
     parser.add_argument("--allow-partial-responses", action="store_true")
     parser.add_argument("--continue-with-existing-ai-artifacts", action="store_true")
     parser.add_argument("--stop-at-missing-ai", action="store_true")

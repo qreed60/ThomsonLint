@@ -1223,3 +1223,23 @@ The importer writes manifest, status, blockers, review, and index artifacts, the
 The `topology_ai` driver now has `pr26_ai_packet_response_import` between PR26 and PR27. Default behavior is unchanged: without `--responses-dir` or fixture responses, PR27 blocks on missing raw responses. With `--responses-dir`, the driver imports responses before PR27. `--allow-partial-responses` permits subset imports while reporting missing packets.
 
 PR42 does not call AI, does not require qwen_vision, does not fabricate response content, does not synthesize accepted extraction results, and does not apply candidates or write core artifacts.
+
+## PR44 — Non-Empty Topology AI Fixture and Approval Driver Flow v0
+
+PR44 adds a deterministic non-empty fixture workflow under `tests/fixtures/topology_ai_non_empty/`. The response fixtures are static, hand-authored JSON files, not live AI output. They exercise PR27 through PR37 with at least one accepted extraction item, patch, candidate, adapter output, ingested candidate, PR32 approval queue item, and PR34 approved dry-run preview.
+
+The topology_ai driver now accepts explicit approval decisions:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --allow-existing-outputs \
+  --responses-dir tests/fixtures/topology_ai_non_empty/responses \
+  --approval-decisions tests/fixtures/topology_ai_non_empty/approval-decisions.json
+```
+
+Default behavior is unchanged. Without `--approval-decisions`, PR33 writes pending decision templates and PR34 skips approved operations. The driver must never auto-approve candidates. With `--approval-decisions`, PR33 validates the explicit human-authored decision artifact against the PR32 approval queue, records the decision and validation artifacts in the run-local PR32 promotion directory, and PR34 consumes those recorded paths.
+
+PR44 remains review-only: no AI calls, no qwen_vision requirement, no response fabrication in normal runs, no core artifact writes, no addenda merge, no candidate apply to core, and no `safe_for_core_apply` / `ready_for_core_apply` true values.

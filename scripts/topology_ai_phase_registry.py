@@ -19,6 +19,7 @@ class TopologyPaths:
     dry_run: bool
     fixtures_dir: Path | None = None
     responses_dir: Path | None = None
+    approval_decisions: Path | None = None
     allow_partial_responses: bool = False
 
     def core(self, suffix: str) -> Path:
@@ -728,7 +729,7 @@ def _cmd_pr32(paths: TopologyPaths) -> list[str]:
 
 
 def _cmd_pr33(paths: TopologyPaths) -> list[str]:
-    return [
+    command = [
         *_py(paths, "ai_approval_decision_edit.py"),
         "--project",
         paths.project,
@@ -738,9 +739,13 @@ def _cmd_pr33(paths: TopologyPaths) -> list[str]:
         str(_approval_decisions(paths)),
         "--validate-out",
         str(_approval_validation(paths)),
-        "--decision-template",
-        *_strict(paths),
     ]
+    if paths.approval_decisions:
+        command.extend(["--decisions", str(paths.approval_decisions), "--validate-only"])
+    else:
+        command.append("--decision-template")
+    command.extend(_strict(paths))
+    return command
 
 
 def _cmd_pr34(paths: TopologyPaths) -> list[str]:
@@ -837,7 +842,7 @@ TOPOLOGY_AI_PHASES: tuple[PhaseSpec, ...] = (
     PhaseSpec("pr30_ai_candidate_adapter_outputs", 30, "candidate adapter outputs/artifacts", "ai_candidate_adapter_build.py", lambda p: [p.stage_file("pr29_ai_candidate_materialize", "ai-candidate-inputs.json")], lambda p: [p.stage_file("pr30_ai_candidate_adapter_outputs", "ai-adapter-manifest.json")], _cmd_pr30, "PR30 creates adapter outputs/artifacts, not adapter scripts."),
     PhaseSpec("pr31_ai_candidate_ingest", 31, "candidate ingestion workflow", "ai_candidate_ingest_workflow.py", lambda p: [p.stage_file("pr30_ai_candidate_adapter_outputs", "ai-adapter-manifest.json")], lambda p: [p.stage_file("pr31_ai_candidate_ingest", "ai-candidate-ingestion-manifest.json")], _cmd_pr31, "PR31 ingests candidate adapter outputs in isolation."),
     PhaseSpec("pr32_ai_promotion_plan", 32, "promotion plan / approval queue", "ai_candidate_promotion_plan.py", lambda p: [p.stage_file("pr31_ai_candidate_ingest", "ai-candidate-ingestion-manifest.json")], lambda p: [p.stage_file("pr32_ai_promotion_plan", "ai-candidate-promotion-plan.json"), p.stage_file("pr32_ai_promotion_plan", "ai-candidate-approval-queue.json")], _cmd_pr32, "PR32 builds a review-only promotion plan and approval queue."),
-    PhaseSpec("pr33_ai_approval_decisions", 33, "approval decision artifact generation/validation", "ai_approval_decision_edit.py", lambda p: [p.stage_file("pr32_ai_promotion_plan", "ai-candidate-approval-queue.json")], lambda p: [_approval_decisions(p), _approval_validation(p)], _cmd_pr33, "PR33 generates and validates human decision artifacts with safe_to_apply false."),
+    PhaseSpec("pr33_ai_approval_decisions", 33, "approval decision artifact generation/validation", "ai_approval_decision_edit.py", lambda p: [p.stage_file("pr32_ai_promotion_plan", "ai-candidate-approval-queue.json")] + ([p.approval_decisions] if p.approval_decisions else []), lambda p: [_approval_decisions(p), _approval_validation(p)], _cmd_pr33, "PR33 generates and validates human decision artifacts with safe_to_apply false."),
     PhaseSpec("pr34_ai_promotion_apply_dry_run", 34, "approved-only dry run", "ai_promotion_apply_dry_run.py", lambda p: [p.stage_file("pr32_ai_promotion_plan", "ai-candidate-promotion-plan.json"), _approval_decisions(p), _approval_validation(p)], lambda p: [p.stage_file("pr34_ai_promotion_apply_dry_run", "ai-approved-promotion-apply-dry-run.json")], _cmd_pr34, "PR34 produces an approved-only dry-run plan without applying promotions.", "dry_apply"),
     PhaseSpec("pr35_ai_candidate_core_input_apply", 35, "candidate core-input apply to isolated files", "ai_candidate_core_input_apply.py", lambda p: [p.stage_file("pr34_ai_promotion_apply_dry_run", "ai-approved-promotion-apply-dry-run.json")], lambda p: [p.stage_file("pr35_ai_candidate_core_input_apply", "ai-candidate-core-input-apply-manifest.json")], _cmd_pr35, "PR35 applies approved operations only to isolated candidate input files.", "isolated_candidate_apply"),
     PhaseSpec("pr36_ai_candidate_core_input_ingest", 36, "candidate core-input ingestion workflow", "ai_candidate_core_input_ingest_workflow.py", lambda p: [p.stage_file("pr35_ai_candidate_core_input_apply", "ai-candidate-core-input-apply-manifest.json")], lambda p: [p.stage_file("pr36_ai_candidate_core_input_ingest", "ai-candidate-core-input-ingest-manifest.json")], _cmd_pr36, "PR36 ingests isolated candidate core inputs only."),

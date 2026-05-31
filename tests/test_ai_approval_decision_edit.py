@@ -580,6 +580,41 @@ def test_validate_only_does_not_modify_decision_file(tmp_path: Path) -> None:
     assert before_text == after_text
 
 
+def test_validate_only_can_copy_external_decisions_to_safe_out_path(tmp_path: Path) -> None:
+    approval_queue_fixture(tmp_path)
+    external = tmp_path / "fixture-decisions.json"
+    decisions = [
+        {
+            "decision_id": "decision_aq001",
+            "approval_item_id": "aq_001",
+            "promotion_candidate_id": "pc_u2_v3p3_max",
+            "decision": "approved",
+            "reviewer": "fixture",
+            "reviewed_at_utc": "2026-05-31T00:00:00Z",
+            "approval_note": "approved fixture decision",
+            "reason_code": None,
+            "safe_to_apply": False,
+            "source_queue_item": {"review_type": "approve_add", "priority": "high", "target_summary": "", "candidate_summary": "", "core_summary": ""},
+        },
+    ]
+    external.write_text(json.dumps({"project": "TestProject", "schema_version": "ai_approval_decisions_v1", "decisions": decisions}, indent=2), encoding="utf-8")
+    before_text = external.read_text(encoding="utf-8")
+    promo_dir = tmp_path / "exports" / "TestProject" / "ai_promotion"
+    out_path = promo_dir / "ai-approval-decisions.json"
+
+    result = run_editor(
+        "--project", "TestProject",
+        "--promotion-dir", str(promo_dir),
+        "--decisions", str(external),
+        "--validate-only",
+        "--out", str(out_path),
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert external.read_text(encoding="utf-8") == before_text
+    assert read_json(out_path)["decisions"][0]["decision"] == "approved"
+    assert read_json(promo_dir / "ai-approval-decision-validation.json")["source_decisions"] == str(out_path)
+
+
 def test_edit_can_write_to_out_without_mutating_input_decisions(tmp_path: Path) -> None:
     approval_queue_fixture(tmp_path)
     decisions = [

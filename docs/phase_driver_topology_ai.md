@@ -43,6 +43,8 @@ PR26 builds prompt-ready packet scaffolding only. It does not call AI services, 
 
 PR42 adds an offline response import stage between PR26 and PR27. By default it is `not_applicable`, and the PR27 missing-response block is still expected when no raw responses exist. When `--responses-dir PATH` is supplied, the driver imports externally prepared response JSON into `pr26_ai_packet_build/packets/<packet_id>/raw_response.json` before PR27 validation. Fixture response directories are also recognized under `--fixtures-dir` as `responses/` or `ai_responses/`.
 
+PR44 adds explicit approval-decision input for fixture and manual review workflows. By default PR33 still writes a pending decision template and the driver never auto-approves candidates. When `--approval-decisions PATH` is supplied, PR33 validates that human-authored decision artifact against the run-local PR32 approval queue, copies it to the run-local PR32 promotion directory, writes validation beside it, and PR34 consumes those recorded paths.
+
 After PR26 and optional response import, the driver checks for saved raw AI response artifacts. If they are missing, PR27 is marked `blocked_missing_input` and PR28-PR37 are skipped with a blocker reference. Existing or fixture AI artifacts are considered only when explicitly requested with `--fixtures-dir`, `--responses-dir`, or `--continue-with-existing-ai-artifacts`.
 
 PR26-PR37 remain isolated and review-only. The driver does not write candidate outputs into authoritative core locations, does not apply promotions to core, does not merge addenda, and does not run post-promotion allocation or calculation reruns. Full core apply remains a future explicit stage.
@@ -56,6 +58,20 @@ exports/TestProject/phase_runs/topology_ai/<run-id>/pr32_ai_promotion_plan/
 ```
 
 This is isolated same-run promotion directory mutation, not core mutation. PR34 consumes these exact recorded paths.
+
+Run with response fixtures and explicit approval decisions:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --allow-existing-outputs \
+  --responses-dir tests/fixtures/topology_ai_non_empty/responses \
+  --approval-decisions tests/fixtures/topology_ai_non_empty/approval-decisions.json
+```
+
+PR34 and later stages remain dry-run/candidate-only. The driver does not apply candidates to core, merge addenda, rerun allocation/calculations, or mark core apply readiness true.
 
 ## Stage Order
 
