@@ -60,6 +60,7 @@ def create_post_conversion_inputs(root: Path, project: str = "TestProject", *, s
         (post / f"{project}-thomson-export-stack.json").write_text("{}", encoding="utf-8")
     schemas = root / "schemas"
     schemas.mkdir(exist_ok=True)
+    (schemas / "calculation_readiness_schema.json").write_text("{}", encoding="utf-8")
     (schemas / "calculation_input_schema.json").write_text("{}", encoding="utf-8")
     (schemas / "calculation_result_schema.json").write_text("{}", encoding="utf-8")
     return post
@@ -509,6 +510,52 @@ def test_pr17_independent_when_pr16_blocks(tmp_path: Path, monkeypatch: pytest.M
     assert pr17["status"] == "not_applicable"
     assert pr18["status"] == "skipped"
     assert pr18["blocker_id"] == rows[0]["blocker_id"]
+
+
+def test_pr17_passes_when_required_schemas_are_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    out_dir = run_driver(tmp_path, "--start", "pr17", "--end", "pr17")
+    rows = stage_results(out_dir)
+    blockers = read_json(out_dir / "phase-driver-blockers.json")["blockers"]
+
+    assert rows[0]["phase_id"] == "pr17_schema_available"
+    assert rows[0]["status"] == "passed"
+    assert rows[0]["blocker_id"] is None
+    assert blockers == []
+
+
+def test_pr17_reports_genuinely_missing_required_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    (fake_root / "schemas" / "calculation_readiness_schema.json").unlink()
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    out_dir = run_driver(tmp_path, "--start", "pr17", "--end", "pr17")
+    rows = stage_results(out_dir)
+    blockers = read_json(out_dir / "phase-driver-blockers.json")["blockers"]
+
+    assert rows[0]["status"] == "not_applicable"
+    assert rows[0]["blocker_id"] == "pr17_schema_available_missing_schema"
+    assert blockers[0]["blocker_id"] == "pr17_schema_available_missing_schema"
+    assert blockers[0]["reason"] == "schema_not_available"
+    assert blockers[0]["missing_paths"] == [str(fake_root / "schemas" / "calculation_readiness_schema.json")]
+
+
+def test_normal_pr17_status_has_no_schema_blocker_and_preserves_safety_flags(tmp_path: Path) -> None:
+    out_dir = run_driver(tmp_path, "--start", "pr17", "--end", "pr17")
+    status = read_json(out_dir / "phase-driver-status.json")
+    blockers = read_json(out_dir / "phase-driver-blockers.json")["blockers"]
+    rows = stage_results(out_dir)
+
+    assert status["overall_status"] == "passed"
+    assert status["blocker_count"] == 0
+    assert rows[0]["status"] == "passed"
+    assert not any(blocker["blocker_id"] == "pr17_schema_available_missing_schema" for blocker in blockers)
+    assert status["safe_for_core_apply"] is False
+    assert status["ready_for_core_apply"] is False
+    assert status["workflow_run_only"] is True
+    assert status["wrote_core_artifacts"] is False
 
 
 def test_downstream_pr18_blocks_on_missing_previous_stage_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
