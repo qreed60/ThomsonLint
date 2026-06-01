@@ -26,6 +26,7 @@ DEFAULT_MAX_ITEMS_PER_PACKET = 5
 MAX_ATTEMPTS = 2
 MAX_TARGET_EVIDENCE_ROWS = 5
 MAX_SCHEMATIC_SNIPPETS = 10
+SEMANTIC_TARGET_TYPE_EXAMPLES = "connector, mosfet, capacitor, resistor, regulator, fuse, IC, or diode"
 
 PACKET_LIFECYCLE = [
     "pending",
@@ -469,6 +470,10 @@ def context_for_packet(
         "packet_id": packet_id,
         "stage_id": stage_id,
         "stage_name": stage["stage_name"],
+        "packet_type": stage["packet_type"],
+        "target_type": stage["target_type"],
+        "expected_target_type": stage["target_type"],
+        "allowed_target_type": stage["target_type"],
         "target_refdes": target_ref,
         "target_mpn": target_part,
         "target_manufacturer": target.get("target_manufacturer"),
@@ -613,6 +618,16 @@ def bounded_link_rows(data: dict[str, Any] | None, items: list[dict[str, Any]]) 
 def prompt_for_packet(packet: dict[str, Any], context: dict[str, Any]) -> str:
     item_ids = ", ".join(packet["missing_data_item_ids"])
     forbidden = "\n".join(f"- {value}" for value in packet["forbidden_outputs"])
+    target_type_guidance = ""
+    if packet["packet_type"] == "datasheet_current_extraction":
+        expected_target_type = packet["expected_target_type"]
+        target_type_guidance = f"""
+## Target Type Contract
+- Use target_type exactly as provided in request.json.
+- For this packet, target_type must be {expected_target_type}.
+- Do not replace target_type with component class words such as {SEMANTIC_TARGET_TYPE_EXAMPLES}.
+- Component class may be described in notes or evidence, but not in target_type.
+"""
     return f"""# {packet['packet_id']} - {packet['stage_name']}
 
 ## Packet Objective
@@ -622,10 +637,12 @@ Extract only the bounded data needed for this packet type: {packet['packet_type'
 - Refdes: {packet['target_refdes']}
 - MPN: {packet.get('target_mpn') or 'unknown'}
 - Missing data item IDs: {item_ids}
+- Expected target_type: {packet['expected_target_type']}
 
 ## Required Output
 - Required output schema: {packet['required_output_schema']}
 - Allowed output fields: values explicitly defined by the required schema, source evidence, units, confidence, and unknown markers.
+{target_type_guidance}
 
 ## Provided Context Summary
 - Missing data items: {len(context['missing_data_items'])}
@@ -663,6 +680,8 @@ def packet_request(packet: dict[str, Any], context: dict[str, Any]) -> dict[str,
         "stage_name": packet["stage_name"],
         "packet_type": packet["packet_type"],
         "target_type": packet["target_type"],
+        "expected_target_type": packet["expected_target_type"],
+        "allowed_target_type": packet["expected_target_type"],
         "target_refdes": packet["target_refdes"],
         "target_mpn": packet.get("target_mpn"),
         "target_manufacturer": packet.get("target_manufacturer"),
@@ -753,6 +772,8 @@ def build_packets(
                 "stage_name": stage["stage_name"],
                 "packet_type": stage["packet_type"],
                 "target_type": stage["target_type"],
+                "expected_target_type": stage["target_type"],
+                "allowed_target_type": stage["target_type"],
                 "target_refdes": refdes,
                 "target_mpn": target.get("target_mpn"),
                 "target_manufacturer": target.get("target_manufacturer"),
@@ -864,6 +885,10 @@ def validate_outputs(
     for packet, context, prompt, status in packet_files:
         if not packet.get("required_output_schema"):
             raise ValueError(f"{packet['packet_id']} missing required_output_schema")
+        if packet.get("expected_target_type") != packet.get("target_type"):
+            raise ValueError(f"{packet['packet_id']} expected_target_type must match target_type")
+        if context.get("expected_target_type") != packet.get("expected_target_type"):
+            raise ValueError(f"{packet['packet_id']} context expected_target_type mismatch")
         if not set(packet["missing_data_item_ids"]).issubset(valid_item_ids):
             raise ValueError(f"{packet['packet_id']} references unknown missing data item")
         if len(context["missing_data_items"]) != len(packet["missing_data_item_ids"]):
@@ -871,6 +896,10 @@ def validate_outputs(
         for phrase in ("Do not guess", "Do not produce findings", "Do not produce pass/fail", "Do not produce compliance judgments"):
             if phrase not in prompt:
                 raise ValueError(f"{packet['packet_id']} prompt missing guardrail: {phrase}")
+        if packet["packet_type"] == "datasheet_current_extraction":
+            for phrase in ("Use target_type exactly as provided in request.json", "target_type must be component_current_model", "Do not replace target_type with component class words"):
+                if phrase not in prompt:
+                    raise ValueError(f"{packet['packet_id']} prompt missing target_type guardrail: {phrase}")
         if status["packet_id"] != packet["packet_id"]:
             raise ValueError(f"{packet['packet_id']} status mismatch")
     summary = queue["summary"]

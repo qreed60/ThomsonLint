@@ -288,6 +288,11 @@ def test_unsupported_field_name_is_rejected(tmp_path: Path) -> None:
     assert artifact["rejected_items"][0]["reason_code"] == "unsupported_field_name"
 
 
+def test_semantic_component_class_target_type_is_rejected(tmp_path: Path) -> None:
+    artifact = artifact_for_item(tmp_path, current_item(target_type="mosfet"))
+    assert artifact["rejected_items"][0]["reason_code"] == "unsupported_target_type"
+
+
 def test_forbidden_finding_field_rejects_item_or_packet(tmp_path: Path) -> None:
     artifact = artifact_for_item(tmp_path, current_item(finding_id="F1"))
     assert any(row["reason_code"] == "forbidden_output_field" for row in artifact["rejected_items"])

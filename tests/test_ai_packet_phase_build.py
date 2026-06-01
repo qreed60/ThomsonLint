@@ -341,6 +341,37 @@ def test_prompt_contains_evidence_requirement(tmp_path: Path) -> None:
     assert "Every extracted numeric value must include unit and evidence" in prompt
 
 
+def test_12b_prompt_requires_exact_component_current_model_target_type(tmp_path: Path) -> None:
+    result, out_dir = invoke(tmp_path, [mdi("mdi_current", "branch_current_unknown", "component", "Q2", refdes="Q2")])
+    assert result.returncode == 0, result.stderr + result.stdout
+    packet = only_packet(out_dir)
+    prompt = (out_dir / packet["prompt_path"]).read_text(encoding="utf-8")
+
+    assert packet["packet_type"] == "datasheet_current_extraction"
+    assert "Use target_type exactly as provided in request.json." in prompt
+    assert "For this packet, target_type must be component_current_model." in prompt
+    assert "Do not replace target_type with component class words such as connector, mosfet, capacitor, resistor, regulator, fuse, IC, or diode." in prompt
+    assert "Component class may be described in notes or evidence, but not in target_type." in prompt
+
+
+def test_12b_request_and_context_expose_expected_target_type(tmp_path: Path) -> None:
+    result, out_dir = invoke(tmp_path, [mdi("mdi_current", "current_model_missing", "component", "P4", refdes="P4")])
+    assert result.returncode == 0, result.stderr + result.stdout
+    packet = only_packet(out_dir)
+    request = read_json(out_dir / "packets" / packet["packet_id"] / "request.json")
+    context = read_json(out_dir / packet["context_path"])
+
+    assert packet["target_type"] == "component_current_model"
+    assert packet["expected_target_type"] == "component_current_model"
+    assert packet["allowed_target_type"] == "component_current_model"
+    assert request["target_type"] == "component_current_model"
+    assert request["expected_target_type"] == "component_current_model"
+    assert request["allowed_target_type"] == "component_current_model"
+    assert context["target_type"] == "component_current_model"
+    assert context["expected_target_type"] == "component_current_model"
+    assert context["allowed_target_type"] == "component_current_model"
+
+
 def test_prompt_forbids_findings_pass_fail_and_compliance(tmp_path: Path) -> None:
     result, out_dir = invoke(tmp_path, [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")])
     assert result.returncode == 0, result.stderr + result.stdout
