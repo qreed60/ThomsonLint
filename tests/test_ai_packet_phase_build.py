@@ -91,10 +91,27 @@ def bom_fixture() -> dict[str, Any]:
     return {
         "project": "TestProject",
         "components": [
-            {"refdes": "U1", "mpn": "REG-123"},
-            {"refdes": "U2", "mpn": "MCU-456"},
-            {"refdes": "F1", "mpn": "FUSE-789"},
-            {"refdes": "J1", "mpn": "CONN-001"},
+            {"refdes": "U1", "mpn": "REG-123", "manufacturer": "RegCo", "value": "3V3", "description": "Regulator"},
+            {"refdes": "U2", "mpn": "MCU-456", "manufacturer": "ChipCo", "value": "MCU", "description": "Controller"},
+            {"refdes": "F1", "mpn": "FUSE-789", "manufacturer": "FuseCo", "value": "1A", "description": "Fuse"},
+            {"refdes": "J1", "mpn": "CONN-001", "manufacturer": "ConnCo", "value": "2x5", "description": "Connector"},
+        ],
+    }
+
+
+def schematic_fixture() -> dict[str, Any]:
+    return {
+        "project": "TestProject",
+        "components": [
+            {
+                "refdes": "U2",
+                "value": "MCU",
+                "footprint": "QFN",
+                "part_number": "MCU-456",
+                "bom": {"description": "Controller", "manufacturer": "ChipCo", "mpn": "MCU-456", "quantity": "1", "dnp": None},
+                "pins": [{"pin": "1", "net": "V3P3"}],
+            },
+            {"refdes": "U9", "value": "OTHER", "part_number": "OTHER-999"},
         ],
     }
 
@@ -105,6 +122,9 @@ def invoke(
     *,
     max_items_per_packet: int | None = None,
     with_bom: bool = True,
+    bom: dict[str, Any] | None = None,
+    with_schematic: bool = False,
+    schematic: dict[str, Any] | None = None,
     with_datasheet_manifest: bool = True,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     manifest = write_json(tmp_path / "manifest.json", manifest_fixture(items))
@@ -124,7 +144,9 @@ def invoke(
     if max_items_per_packet is not None:
         args.extend(["--max-items-per-packet", str(max_items_per_packet)])
     if with_bom:
-        args.extend(["--bom", str(write_json(tmp_path / "bom.json", bom_fixture()))])
+        args.extend(["--bom", str(write_json(tmp_path / "bom.json", bom if bom is not None else bom_fixture()))])
+    if with_schematic:
+        args.extend(["--schematic-export", str(write_json(tmp_path / "schematic.json", schematic if schematic is not None else schematic_fixture()))])
     if with_datasheet_manifest:
         args.extend(["--datasheet-manifest", str(write_json(tmp_path / "datasheets.json", {"datasheets": []}))])
     return run_build(*args), out_dir
@@ -339,6 +361,108 @@ def test_context_is_bounded_to_relevant_missing_items(tmp_path: Path) -> None:
     for packet in packets(out_dir):
         context = read_json(out_dir / packet["context_path"])
         assert {item["manifest_id"] for item in context["missing_data_items"]} == set(packet["missing_data_item_ids"])
+
+
+def test_actual_testproject_bom_field_names_populate_target_metadata(tmp_path: Path) -> None:
+    bom = read_json(ROOT / "TestProject" / "post_conversion" / "TestProject-bom.json")
+    result, out_dir = invoke(tmp_path, [mdi("mdi_c40", "rating_missing", "component", "C40", refdes="C40")], bom=bom)
+    assert result.returncode == 0, result.stderr + result.stdout
+    packet = only_packet(out_dir)
+    assert packet["target_mpn"] == "GRM155R71H104KE14D"
+    assert packet["target_manufacturer"] == "Murata"
+    assert packet["target_value"] == "0.1UF"
+    assert packet["target_description"] == "CAP_CER_0.1UF_50V_10%_X7R_0402"
+
+
+def test_bom_refdes_index_supports_multi_refdes_rows(tmp_path: Path) -> None:
+    bom = {
+        "items": [
+            {
+                "Ref Des": "C1, C2 C3",
+                "Value": "0.1UF",
+                "Description": "shared capacitor row",
+                "Manufacturer": "CapCo",
+                "MPN": "CAP-001",
+            }
+        ]
+    }
+    result, out_dir = invoke(tmp_path, [mdi("mdi_c2", "rating_missing", "component", "C2", refdes="C2")], bom=bom)
+    assert result.returncode == 0, result.stderr + result.stdout
+    packet = only_packet(out_dir)
+    assert packet["target_mpn"] == "CAP-001"
+    context = read_json(out_dir / packet["context_path"])
+    assert context["target_bom_evidence"][0]["matched_refdes"] == "C2"
+
+
+def test_request_json_contains_enriched_target_fields(tmp_path: Path) -> None:
+    result, out_dir = invoke(tmp_path, [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")])
+    assert result.returncode == 0, result.stderr + result.stdout
+    packet = only_packet(out_dir)
+    request = read_json(out_dir / "packets" / packet["packet_id"] / "request.json")
+    assert request["target_mpn"] == "MCU-456"
+    assert request["target_bom_row_id"] is not None
+    assert request["target_bom_evidence"][0]["source"] == "bom"
+
+
+def test_context_json_contains_bounded_target_bom_evidence(tmp_path: Path) -> None:
+    result, out_dir = invoke(tmp_path, [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")])
+    assert result.returncode == 0, result.stderr + result.stdout
+    packet = only_packet(out_dir)
+    context = read_json(out_dir / packet["context_path"])
+    assert len(context["target_bom_evidence"]) == 1
+    assert context["target_bom_evidence"][0]["fields"]["mpn"] == "MCU-456"
+    assert "target_placement" in context["target_bom_evidence"][0]
+
+
+def test_unmatched_refdes_remains_without_mpn_and_records_reason(tmp_path: Path) -> None:
+    result, out_dir = invoke(tmp_path, [mdi("mdi_u9", "branch_current_unknown", "component", "U9", refdes="U9")])
+    assert result.returncode == 0, result.stderr + result.stdout
+    packet = only_packet(out_dir)
+    assert packet["target_mpn"] is None
+    assert packet["target_bom_match_status"] == "no_component_bom_match"
+    assert "no BOM row matched" in packet["target_bom_match_reason"]
+
+
+def test_rail_names_are_not_given_fake_mpns(tmp_path: Path) -> None:
+    result, out_dir = invoke(tmp_path, [mdi("mdi_v5p0", "rail_current_unknown", "rail", "V5P0", affected_rails=["V5P0"])])
+    assert result.returncode == 0, result.stderr + result.stdout
+    packet = only_packet(out_dir)
+    assert packet["target_refdes"] == "V5P0"
+    assert packet["target_mpn"] is None
+    assert packet["target_bom_evidence"] == []
+
+
+def test_no_unrelated_bom_rows_are_included_in_packet_context(tmp_path: Path) -> None:
+    result, out_dir = invoke(tmp_path, [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")])
+    assert result.returncode == 0, result.stderr + result.stdout
+    context = read_json(out_dir / only_packet(out_dir)["context_path"])
+    serialized = json.dumps(context["target_bom_evidence"])
+    assert "MCU-456" in serialized
+    assert "REG-123" not in serialized
+    assert "FUSE-789" not in serialized
+
+
+def test_schematic_evidence_is_bounded_when_included(tmp_path: Path) -> None:
+    result, out_dir = invoke(
+        tmp_path,
+        [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")],
+        with_schematic=True,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    context = read_json(out_dir / only_packet(out_dir)["context_path"])
+    assert len(context["schematic_snippets"]) == 1
+    snippet = context["schematic_snippets"][0]
+    assert snippet["source"] == "schematic_export"
+    assert snippet["bom"]["mpn"] == "MCU-456"
+    assert "pins" not in snippet
+
+
+def test_ai_packet_builder_uses_no_shell_true_or_network_ai_imports() -> None:
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "shell=True" not in text
+    for forbidden in ("requests", "httpx", "aiohttp", "openai", "litellm"):
+        assert f"import {forbidden}" not in text
+        assert f"from {forbidden}" not in text
 
 
 def test_missing_optional_datasheet_manifest_is_warning_not_failure(tmp_path: Path) -> None:

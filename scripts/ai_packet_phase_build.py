@@ -24,6 +24,8 @@ DEFAULT_PHASE_ID = "12"
 DEFAULT_PHASE_NAME = "AI Data Completion"
 DEFAULT_MAX_ITEMS_PER_PACKET = 5
 MAX_ATTEMPTS = 2
+MAX_TARGET_EVIDENCE_ROWS = 5
+MAX_SCHEMATIC_SNIPPETS = 10
 
 PACKET_LIFECYCLE = [
     "pending",
@@ -118,6 +120,21 @@ HIGH_RISK_BLOCKERS = {
     "regulator_load_margin",
 }
 
+REFDES_FIELD_ALIASES = (
+    "refdes",
+    "ref des",
+    "reference designator",
+    "reference",
+    "references",
+    "designator",
+    "designators",
+    "part",
+)
+MPN_FIELD_ALIASES = ("mpn", "manufacturer part number", "manufacturer_part_number", "mfg p/n", "mfg p/n_1", "mpn_1", "part number")
+MANUFACTURER_FIELD_ALIASES = ("manufacturer", "mfg", "mfg_1")
+VALUE_FIELD_ALIASES = ("value", "part value")
+DESCRIPTION_FIELD_ALIASES = ("description", "desc", "item name")
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -196,6 +213,192 @@ def refdes_sort_key(value: str) -> tuple[str, int, str]:
     return match.group(1).upper(), int(match.group(2)), match.group(3)
 
 
+def normalized_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def first_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if value is not None and not isinstance(value, (dict, list)):
+        text = str(value).strip()
+        return text or None
+    return None
+
+
+def find_field(row: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    wanted = {normalized_key(alias) for alias in aliases}
+    for source in (row, row.get("fields") if isinstance(row.get("fields"), dict) else None, row.get("custom_metadata") if isinstance(row.get("custom_metadata"), dict) else None):
+        if not isinstance(source, dict):
+            continue
+        for key, value in source.items():
+            if normalized_key(str(key)) in wanted:
+                return value
+    return None
+
+
+def split_refdes_values(value: Any) -> list[str]:
+    values: list[str] = []
+    raw_values = value if isinstance(value, list) else [value]
+    for raw in raw_values:
+        text = first_text(raw)
+        if not text:
+            continue
+        for token in re.split(r"[\s,;]+", text):
+            token = token.strip()
+            if token:
+                values.append(token)
+    return values
+
+
+def row_refdes_values(row: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for alias in REFDES_FIELD_ALIASES:
+        value = find_field(row, (alias,))
+        refs.extend(split_refdes_values(value))
+    seen: set[str] = set()
+    unique: list[str] = []
+    for ref in refs:
+        key = ref.upper()
+        if key not in seen:
+            seen.add(key)
+            unique.append(ref)
+    return unique
+
+
+def iterable_artifact_rows(data: dict[str, Any] | None) -> list[tuple[str, int, dict[str, Any]]]:
+    if not isinstance(data, dict):
+        return []
+    rows: list[tuple[str, int, dict[str, Any]]] = []
+    for key in ("components", "bom", "parts", "items", "rows"):
+        for idx, row in enumerate(as_list(data.get(key))):
+            if isinstance(row, dict):
+                rows.append((key, idx, row))
+    return rows
+
+
+def primary_manufacturer(row: dict[str, Any]) -> str | None:
+    manufacturer = first_text(find_field(row, MANUFACTURER_FIELD_ALIASES))
+    if manufacturer:
+        return manufacturer
+    for entry in as_list(row.get("manufacturers")):
+        if isinstance(entry, dict):
+            manufacturer = first_text(entry.get("manufacturer"))
+            if manufacturer:
+                return manufacturer
+    bom = row.get("bom")
+    if isinstance(bom, dict):
+        return first_text(bom.get("manufacturer"))
+    return None
+
+
+def primary_mpn(row: dict[str, Any]) -> str | None:
+    mpn = first_text(find_field(row, MPN_FIELD_ALIASES))
+    if mpn:
+        return mpn
+    for entry in as_list(row.get("manufacturers")):
+        if isinstance(entry, dict):
+            mpn = first_text(entry.get("mpn") or entry.get("manufacturer_part_number") or entry.get("part_number"))
+            if mpn:
+                return mpn
+    bom = row.get("bom")
+    if isinstance(bom, dict):
+        mpn = first_text(bom.get("mpn") or bom.get("manufacturer_part_number") or bom.get("part_number"))
+        if mpn:
+            return mpn
+    return first_text(row.get("part_number"))
+
+
+def bounded_bom_row_evidence(row: dict[str, Any], *, source_key: str, source_index: int, refdes: str) -> dict[str, Any]:
+    fields = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+    custom_metadata = row.get("custom_metadata") if isinstance(row.get("custom_metadata"), dict) else {}
+    placement = row.get("placement_data") if isinstance(row.get("placement_data"), dict) else {}
+    return {
+        "source": "bom",
+        "source_key": source_key,
+        "source_index": source_index,
+        "source_row_id": row.get("row_id") or row.get("id") or row.get("raw_row_index") or source_index,
+        "matched_refdes": refdes,
+        "refdes": row_refdes_values(row)[:50],
+        "fields": {
+            "value": first_text(find_field(row, VALUE_FIELD_ALIASES)),
+            "description": first_text(find_field(row, DESCRIPTION_FIELD_ALIASES)),
+            "manufacturer": primary_manufacturer(row),
+            "mpn": primary_mpn(row),
+            "quantity": first_text(fields.get("quantity") or row.get("quantity")),
+            "footprint": first_text(fields.get("footprint") or row.get("footprint")),
+            "dnp": fields.get("dnp") if "dnp" in fields else row.get("dnp"),
+        },
+        "manufacturers": as_list(row.get("manufacturers"))[:3],
+        "custom_metadata": {str(key): value for key, value in list(custom_metadata.items())[:10]},
+        "target_placement": placement.get(refdes) if isinstance(placement.get(refdes), dict) else None,
+    }
+
+
+def build_bom_refdes_index(bom: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
+    index: dict[str, list[dict[str, Any]]] = {}
+    for source_key, source_index, row in iterable_artifact_rows(bom):
+        refs = row_refdes_values(row)
+        for ref in refs:
+            index.setdefault(ref.upper(), []).append(bounded_bom_row_evidence(row, source_key=source_key, source_index=source_index, refdes=ref))
+    return index
+
+
+def bounded_schematic_evidence(schematic: dict[str, Any] | None, refdes: str, item_ids: set[str]) -> list[dict[str, Any]]:
+    if not isinstance(schematic, dict):
+        return []
+    snippets: list[dict[str, Any]] = []
+    tokens = {refdes, *item_ids}
+    for key in ("components", "pins", "relationships", "snippets", "nets"):
+        for idx, row in enumerate(as_list(schematic.get(key))):
+            if not isinstance(row, dict):
+                continue
+            scalar_values = {str(value) for value in row.values() if value is not None and not isinstance(value, (dict, list))}
+            nested_bom = row.get("bom") if isinstance(row.get("bom"), dict) else {}
+            if refdes == str(row.get("refdes") or row.get("designator") or "") or scalar_values.intersection(tokens):
+                snippets.append(
+                    {
+                        "source": "schematic_export",
+                        "source_key": key,
+                        "source_index": idx,
+                        "refdes": row.get("refdes"),
+                        "value": row.get("value"),
+                        "footprint": row.get("footprint"),
+                        "part_number": row.get("part_number"),
+                        "bom": {
+                            "description": nested_bom.get("description"),
+                            "manufacturer": nested_bom.get("manufacturer"),
+                            "mpn": nested_bom.get("mpn"),
+                            "quantity": nested_bom.get("quantity"),
+                            "dnp": nested_bom.get("dnp"),
+                        }
+                        if nested_bom
+                        else None,
+                    }
+                )
+    return snippets[:MAX_SCHEMATIC_SNIPPETS]
+
+
+def target_enrichment(refdes: str, bom_index: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    matches = bom_index.get(refdes.upper(), [])
+    evidence = matches[:MAX_TARGET_EVIDENCE_ROWS]
+    primary = evidence[0] if evidence else None
+    fields = primary.get("fields", {}) if isinstance(primary, dict) else {}
+    mpn = first_text(fields.get("mpn")) if isinstance(fields, dict) else None
+    return {
+        "target_refdes": refdes,
+        "target_mpn": mpn,
+        "target_manufacturer": first_text(fields.get("manufacturer")) if isinstance(fields, dict) else None,
+        "target_value": first_text(fields.get("value")) if isinstance(fields, dict) else None,
+        "target_description": first_text(fields.get("description")) if isinstance(fields, dict) else None,
+        "target_bom_row_id": primary.get("source_row_id") if isinstance(primary, dict) else None,
+        "target_bom_evidence": evidence,
+        "target_bom_match_status": "matched" if evidence else "no_component_bom_match",
+        "target_bom_match_reason": None if evidence else f"no BOM row matched target_refdes {refdes}",
+    }
+
+
 def target_refdes(item: dict[str, Any]) -> str:
     if isinstance(item.get("refdes"), str):
         return item["refdes"]
@@ -207,22 +410,6 @@ def target_refdes(item: dict[str, Any]) -> str:
     if components:
         return sorted(components, key=refdes_sort_key)[0]
     return str(target_id or item.get("normalized_target") or "project")
-
-
-def target_mpn(refdes: str, bom: dict[str, Any] | None, part_info_index: dict[str, Any] | None) -> str | None:
-    for source in (bom, part_info_index):
-        if not isinstance(source, dict):
-            continue
-        for key in ("components", "bom", "parts", "items", "rows"):
-            for row in as_list(source.get(key)):
-                if not isinstance(row, dict):
-                    continue
-                if str(row.get("refdes") or row.get("designator") or row.get("reference") or "") != refdes:
-                    continue
-                mpn = row.get("mpn") or row.get("manufacturer_part_number") or row.get("part_number")
-                if isinstance(mpn, str) and mpn:
-                    return mpn
-    return None
 
 
 def route_item(item: dict[str, Any]) -> tuple[str | None, bool, str | None]:
@@ -237,9 +424,9 @@ def route_item(item: dict[str, Any]) -> tuple[str | None, bool, str | None]:
     return "12H", True, f"unsupported missing-data category routed to human review: {category or 'unknown'}"
 
 
-def group_key(item: dict[str, Any], stage_id: str, bom: dict[str, Any] | None, part_info_index: dict[str, Any] | None) -> tuple[str, str, str]:
+def group_key(item: dict[str, Any], stage_id: str, bom_index: dict[str, list[dict[str, Any]]]) -> tuple[str, str, str]:
     refdes = target_refdes(item)
-    mpn = target_mpn(refdes, bom, part_info_index) or ""
+    mpn = target_enrichment(refdes, bom_index).get("target_mpn") or ""
     return stage_id, refdes, mpn
 
 
@@ -267,20 +454,14 @@ def context_for_packet(
     stage_id: str,
     stage: dict[str, str],
     target_ref: str,
-    target_part: str | None,
+    target: dict[str, Any],
     items: list[dict[str, Any]],
     optional_data: dict[str, dict[str, Any] | None],
     source_paths: dict[str, Path | None],
 ) -> dict[str, Any]:
-    target_refs = {target_ref}
     item_ids = {item_id(item) for item in items}
-    relevant_schematic = []
-    schematic = optional_data.get("schematic_export")
-    if isinstance(schematic, dict):
-        for key in ("components", "nets", "pins", "relationships", "snippets"):
-            for row in as_list(schematic.get(key)):
-                if isinstance(row, dict) and any(str(value) in target_refs or str(value) in item_ids for value in row.values()):
-                    relevant_schematic.append(row)
+    relevant_schematic = bounded_schematic_evidence(optional_data.get("schematic_export"), target_ref, item_ids)
+    target_part = first_text(target.get("target_mpn"))
     return {
         "project": project,
         "phase_id": phase_id,
@@ -290,12 +471,19 @@ def context_for_packet(
         "stage_name": stage["stage_name"],
         "target_refdes": target_ref,
         "target_mpn": target_part,
+        "target_manufacturer": target.get("target_manufacturer"),
+        "target_value": target.get("target_value"),
+        "target_description": target.get("target_description"),
+        "target_bom_row_id": target.get("target_bom_row_id"),
+        "target_bom_evidence": target.get("target_bom_evidence", []),
+        "target_bom_match_status": target.get("target_bom_match_status"),
+        "target_bom_match_reason": target.get("target_bom_match_reason"),
         "missing_data_items": items,
-        "target_bom_data": bounded_target_rows(optional_data.get("bom"), target_ref),
+        "target_bom_data": target.get("target_bom_evidence", []),
         "role_resolution": bounded_target_rows(optional_data.get("role_resolution"), target_ref),
         "rail_relationships": bounded_link_rows(optional_data.get("rail_relationships"), items),
         "branch_topology_enriched": bounded_link_rows(optional_data.get("branch_topology_enriched"), items),
-        "schematic_snippets": relevant_schematic[:20],
+        "schematic_snippets": relevant_schematic,
         "datasheet_references": bounded_target_rows(optional_data.get("datasheet_manifest"), target_ref)
         + bounded_target_rows(optional_data.get("datasheet_index"), target_ref)
         + bounded_target_rows(optional_data.get("part_info_index"), target_ref)
@@ -438,6 +626,13 @@ def packet_request(packet: dict[str, Any], context: dict[str, Any]) -> dict[str,
         "target_type": packet["target_type"],
         "target_refdes": packet["target_refdes"],
         "target_mpn": packet.get("target_mpn"),
+        "target_manufacturer": packet.get("target_manufacturer"),
+        "target_value": packet.get("target_value"),
+        "target_description": packet.get("target_description"),
+        "target_bom_row_id": packet.get("target_bom_row_id"),
+        "target_bom_evidence": packet.get("target_bom_evidence", []),
+        "target_bom_match_status": packet.get("target_bom_match_status"),
+        "target_bom_match_reason": packet.get("target_bom_match_reason"),
         "missing_data_item_ids": packet["missing_data_item_ids"],
         "required_output_schema": packet["required_output_schema"],
         "acceptable_sources": packet["acceptable_sources"],
@@ -480,6 +675,7 @@ def build_packets(
 
     warnings: list[str] = []
     optional_data = {label: load_optional(path, label, warnings) for label, path in optional_paths.items()}
+    bom_index = build_bom_refdes_index(optional_data.get("bom"))
     items = sorted(manifest_items(manifest), key=lambda row: item_id(row))
     if not items:
         warnings.append("missing-data manifest contains no manifest_items")
@@ -495,7 +691,7 @@ def build_packets(
             continue
         if reason:
             warnings.append(f"{item_id(item)} routed to {stage_id}: {reason}")
-        grouped.setdefault(group_key(item, stage_id, optional_data.get("bom"), optional_data.get("part_info_index")), []).append(item)
+        grouped.setdefault(group_key(item, stage_id, bom_index), []).append(item)
 
     packet_entries: list[dict[str, Any]] = []
     packet_files: list[tuple[dict[str, Any], dict[str, Any], str, dict[str, Any]]] = []
@@ -509,6 +705,9 @@ def build_packets(
             stage_counts[stage_id] += 1
             packet_id = f"{stage_id}-{stage_counts[stage_id]:03d}"
             stage = STAGES[stage_id]
+            target = target_enrichment(refdes, bom_index)
+            if target.get("target_bom_match_reason"):
+                warnings.append(f"{packet_id} {refdes}: {target['target_bom_match_reason']}")
             packet = {
                 "packet_id": packet_id,
                 "stage_id": stage_id,
@@ -516,7 +715,14 @@ def build_packets(
                 "packet_type": stage["packet_type"],
                 "target_type": stage["target_type"],
                 "target_refdes": refdes,
-                "target_mpn": mpn or None,
+                "target_mpn": target.get("target_mpn"),
+                "target_manufacturer": target.get("target_manufacturer"),
+                "target_value": target.get("target_value"),
+                "target_description": target.get("target_description"),
+                "target_bom_row_id": target.get("target_bom_row_id"),
+                "target_bom_evidence": target.get("target_bom_evidence", []),
+                "target_bom_match_status": target.get("target_bom_match_status"),
+                "target_bom_match_reason": target.get("target_bom_match_reason"),
                 "missing_data_item_ids": [item_id(item) for item in chunk],
                 "blocked_calculations": sorted({str(block) for item in chunk for block in as_list(item.get("blocks"))}),
                 "required_output_schema": stage["required_output_schema"],
@@ -536,7 +742,7 @@ def build_packets(
                 stage_id=stage_id,
                 stage=stage,
                 target_ref=refdes,
-                target_part=mpn or None,
+                target=target,
                 items=chunk,
                 optional_data=optional_data,
                 source_paths=source_paths,
