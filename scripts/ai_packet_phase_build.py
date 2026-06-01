@@ -587,6 +587,10 @@ def build_packets(
         "source_artifacts": bounded_artifact_refs(source_paths),
         "errors": [],
         "warnings": warnings,
+        # Safety flags — AI packet phases never apply core artifacts.
+        "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
+        "qwen_vision_invoked": False,
     }
     phase_summary = {
         "project": project,

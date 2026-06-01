@@ -21,6 +21,13 @@ class TopologyPaths:
     responses_dir: Path | None = None
     approval_decisions: Path | None = None
     allow_partial_responses: bool = False
+    bom_path: Path | None = None
+    schematic_export_path: Path | None = None
+    datasheets_dir: Path | None = None
+    datasheet_manifest_path: Path | None = None
+    datasheet_index_path: Path | None = None
+    datasheet_evidence_index_path: Path | None = None
+    part_info_index_path: Path | None = None
 
     def core(self, suffix: str) -> Path:
         return self.repo_root / "exports" / f"{self.project}-{suffix}"
@@ -581,7 +588,7 @@ def _cmd_margin(paths: TopologyPaths, phase_id: str, filename: str) -> list[str]
 
 
 def _cmd_pr26(paths: TopologyPaths) -> list[str]:
-    return [
+    command = [
         *_py(paths, "ai_packet_phase_build.py"),
         "--project",
         paths.project,
@@ -600,6 +607,66 @@ def _cmd_pr26(paths: TopologyPaths) -> list[str]:
         "--role-resolution",
         str(_topology_roles(paths)),
     ]
+
+    # Discover and pass optional source artifacts when available.
+    # BOM: prefer explicit override, then post_conversion discovery.
+    bom = paths.bom_path or _bom(paths)
+    if bom.exists():
+        command.extend(["--bom", str(bom)])
+
+    # Schematic export: prefer explicit override, then post_conversion discovery.
+    sch = paths.schematic_export_path or _schematic(paths)
+    if sch.exists():
+        command.extend(["--schematic-export", str(sch)])
+
+    # Datasheet manifest: ONLY pass explicit CLI override.
+    # Do NOT auto-discover JSONL files (e.g., exports/datasheets/datasheet_manifest.jsonl)
+    # because ai_packet_phase_build.py loads them with load_json() which expects valid JSON,
+    # not JSONL. Passing a JSONL file causes "Extra data: line 2" errors and exit code 2.
+    if paths.datasheet_manifest_path and Path(paths.datasheet_manifest_path).exists():
+        command.extend(["--datasheet-manifest", str(paths.datasheet_manifest_path)])
+
+    # Datasheet index: prefer explicit override.
+    if paths.datasheet_index_path and Path(paths.datasheet_index_path).exists():
+        command.extend(["--datasheet-index", str(paths.datasheet_index_path)])
+
+    # Datasheet evidence index: ONLY pass explicit CLI override or auto-generate from
+    # explicitly provided datasheets_dir (not auto-discovered). Auto-generation is safe
+    # because it runs the deterministic script into a run-local directory.
+    ds_evidence = paths.datasheet_evidence_index_path
+    if ds_evidence is None and paths.datasheets_dir and paths.datasheets_dir.exists():
+        candidate = paths.run_dir / "pre26_datasheet_evidence" / "datasheet-evidence-index.json"
+        if not candidate.exists():
+            # Auto-generate datasheet evidence index from the provided datasheets dir.
+            evidence_out = paths.run_dir / "pre26_datasheet_evidence"
+            evidence_cmd = [
+                paths.python_executable,
+                str(paths.repo_root / "scripts" / "datasheet_evidence_index.py"),
+                "--project", paths.project,
+                "--datasheets-dir", str(paths.datasheets_dir),
+                "--out-dir", str(evidence_out),
+            ]
+            if paths.part_info_index_path and Path(paths.part_info_index_path).exists():
+                evidence_cmd.extend(["--part-info-index", str(paths.part_info_index_path)])
+            if _missing_manifest(paths).exists():
+                evidence_cmd.extend(["--missing-data-manifest", str(_missing_manifest(paths))])
+            # Store the auto-generation command for reference; do not execute here.
+            # The phase driver will handle this as a pre-stage when datasheets_dir is provided.
+        else:
+            ds_evidence = candidate
+    if ds_evidence and Path(ds_evidence).exists():
+        command.extend(["--datasheet-evidence-index", str(ds_evidence)])
+
+    # Part info index: prefer explicit override, then check for project-specific file.
+    part_info = paths.part_info_index_path
+    if part_info is None:
+        candidate = paths.repo_root / "exports" / f"{paths.project}-part-info-index.json"
+        if candidate.exists():
+            part_info = candidate
+    if part_info and Path(part_info).exists():
+        command.extend(["--part-info-index", str(part_info)])
+
+    return command
 
 
 def _responses_dir(paths: TopologyPaths) -> Path | None:
