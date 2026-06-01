@@ -525,11 +525,50 @@ def bounded_datasheet_evidence_rows(
         tokens.update(str(value) for value in as_list(item.get("affected_components")) if value is not None)
     tokens = {token for token in tokens if token}
     rows: list[dict[str, Any]] = []
+    normalized_tokens = {re.sub(r"[^a-z0-9]+", "", token.lower()) for token in tokens if token}
+    document_tokens = {refdes, str(mpn or "")}
+    normalized_document_tokens = {re.sub(r"[^a-z0-9]+", "", token.lower()) for token in document_tokens if token}
+    for doc in as_list(data.get("documents")):
+        if not isinstance(doc, dict):
+            continue
+        doc_values = {
+            str(value)
+            for key in ("filename", "source_file", "matched_mpn", "matched_manufacturer")
+            for value in [doc.get(key)]
+            if value is not None
+        }
+        matched_refdes = doc.get("matched_refdes")
+        if isinstance(matched_refdes, list):
+            doc_values.update(str(value) for value in matched_refdes if value is not None)
+        elif matched_refdes is not None:
+            doc_values.add(str(matched_refdes))
+        matched_bom = doc.get("matched_bom_entry") if isinstance(doc.get("matched_bom_entry"), dict) else {}
+        doc_values.update(str(value) for value in as_list(matched_bom.get("refdes")) if value is not None)
+        if matched_bom.get("mpn") is not None:
+            doc_values.add(str(matched_bom.get("mpn")))
+        normalized_doc_values = {re.sub(r"[^a-z0-9]+", "", value.lower()) for value in doc_values}
+        if normalized_document_tokens.intersection(normalized_doc_values) or any(token and any(token in value for value in normalized_doc_values) for token in normalized_document_tokens):
+            first_block = next((block for block in as_list(doc.get("page_evidence_blocks")) if isinstance(block, dict)), {})
+            rows.append(
+                {
+                    "document_id": doc.get("document_id"),
+                    "filename": doc.get("filename"),
+                    "source_file": doc.get("source_file"),
+                    "page": first_block.get("page"),
+                    "evidence_quote": first_block.get("text_snippet"),
+                    "matched_mpn": doc.get("matched_mpn"),
+                    "matched_manufacturer": doc.get("matched_manufacturer"),
+                    "matched_refdes": doc.get("matched_refdes"),
+                    "text_extraction_status": doc.get("text_extraction_status"),
+                    "extracted_text_available": doc.get("extracted_text_available"),
+                    "extraction_warnings": doc.get("extraction_warnings", []),
+                }
+            )
     for row in as_list(data.get("candidates")):
         if not isinstance(row, dict):
             continue
         values = {str(value) for value in row.values() if value is not None and not isinstance(value, (dict, list))}
-        if values.intersection(tokens) or not row.get("target_identity"):
+        if values.intersection(tokens):
             rows.append(
                 {
                     "candidate_id": row.get("candidate_id"),
