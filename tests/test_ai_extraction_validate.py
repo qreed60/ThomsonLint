@@ -224,8 +224,100 @@ def test_current_model_item_with_unit_condition_and_evidence_is_accepted(tmp_pat
 
 
 def test_rating_item_with_unit_and_evidence_is_accepted(tmp_path: Path) -> None:
-    artifact = artifact_for_item(tmp_path, current_item(target_type="connector_pin_rating", field_name="pin_current_max", value=2.0, unit="A", condition=None))
+    artifact = artifact_for_item(tmp_path, current_item(target_type="fuse_rating", field_name="hold_current", value=2.0, unit="A", condition=None))
     assert len(artifact["accepted_items"]) == 1
+
+
+def test_connector_current_rating_with_condition_is_accepted_as_rating(tmp_path: Path) -> None:
+    artifact = artifact_for_item(
+        tmp_path,
+        current_item(
+            target_type="connector_rating",
+            target_refdes="P4",
+            target_mpn="S2B-XH-A (LF)(SN)",
+            field_name="current_max",
+            value=3.0,
+            unit="A",
+            condition="AC/DC, AWG #22",
+            basis="datasheet connector current rating",
+            evidence_quote="Current rating: 3 A AC/DC (AWG #22)",
+        ),
+    )
+
+    assert artifact["accepted_items"]
+    assert artifact["accepted_items"][0]["target_type"] == "connector_rating"
+    assert artifact["accepted_items"][0]["field_name"] == "current_max"
+    assert artifact["accepted_items"][0]["condition"] == "AC/DC, AWG #22"
+    assert artifact["summary"]["rating_item_count"] == 1
+    assert artifact["summary"]["current_model_item_count"] == 0
+
+
+def test_connector_current_rating_missing_condition_routes_to_human_review(tmp_path: Path) -> None:
+    artifact = artifact_for_item(
+        tmp_path,
+        current_item(
+            target_type="connector_rating",
+            target_refdes="P4",
+            target_mpn="S2B-XH-A (LF)(SN)",
+            field_name="current_max",
+            value=3.0,
+            unit="A",
+            condition=None,
+            evidence_quote="Current rating: 3 A",
+        ),
+    )
+
+    assert artifact["accepted_items"] == []
+    assert artifact["human_review_items"][0]["reason_code"] == "ambiguous_condition"
+
+
+def test_mosfet_component_current_path_still_accepts_operating_current(tmp_path: Path) -> None:
+    artifact = artifact_for_item(
+        tmp_path,
+        current_item(
+            target_type="component_current_model",
+            target_refdes="Q2",
+            target_mpn="MOSFET-123",
+            field_name="max_current_a",
+            value=1.2,
+            unit="A",
+            condition="continuous drain current at 25C",
+            evidence_quote="ID continuous drain current 1.2 A",
+        ),
+    )
+
+    assert artifact["accepted_items"][0]["target_type"] == "component_current_model"
+    assert artifact["summary"]["current_model_item_count"] == 1
+
+
+def test_capacitor_unknown_no_current_response_remains_valid(tmp_path: Path) -> None:
+    unknown = [
+        {
+            "missing_data_item_id": "mdi_u2_current",
+            "target_type": "component_current_model",
+            "target_refdes": "C40",
+            "field_name": "max_current_a",
+            "reason_code": "not_found_in_provided_context",
+            "detail": "capacitor datasheet does not define operating current",
+        }
+    ]
+    result, out, _ = invoke(
+        tmp_path,
+        {
+            "packet_id": "12B-001",
+            "schema_version": "ai_extraction_result_v1",
+            "status": "completed",
+            "extracted_items": [],
+            "unknown_items": unknown,
+            "notes": [],
+            "warnings": [],
+        },
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    artifact = read_json(out)
+    assert artifact["validation_pass"] is True
+    assert artifact["unknown_items"][0]["target_refdes"] == "C40"
 
 
 def test_role_pin_text_item_with_evidence_is_accepted_or_human_review(tmp_path: Path) -> None:

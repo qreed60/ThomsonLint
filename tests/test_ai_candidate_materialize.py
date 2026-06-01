@@ -292,6 +292,26 @@ def test_connector_pin_rating_patch_materializes_rating_candidate(tmp_path: Path
     assert read_json(out_dir / "ai-rating-model-candidates.json")["rating_records"][0]["target_type"] == "connector_pin"
 
 
+def test_connector_rating_patch_materializes_rating_candidate_not_current_candidate(tmp_path: Path) -> None:
+    item = patch(
+        patch_class="rating_model_patch",
+        target_type="connector_rating",
+        target_refdes="P4",
+        target_mpn="S2B-XH-A (LF)(SN)",
+        field_name="current_max",
+        normalized_value=3.0,
+        condition="AC/DC, AWG #22",
+    )
+    result, out_dir, _ = invoke(tmp_path, bundle_fixture([item]))
+    assert result.returncode == 0, result.stderr + result.stdout
+    rating = read_json(out_dir / "ai-rating-model-candidates.json")["rating_records"][0]
+    assert rating["target_type"] == "connector"
+    assert rating["rating_name"] == "current_max"
+    assert rating["value_a"] == 3.0
+    assert rating["condition"] == "AC/DC, AWG #22"
+    assert read_json(out_dir / "ai-current-model-candidates.json")["current_records"] == []
+
+
 def test_regulator_rating_patch_materializes_rating_candidate(tmp_path: Path) -> None:
     item = patch(patch_class="rating_model_patch", target_type="regulator_rating", target_refdes="U1", field_name="output_current_max", normalized_value=1.5)
     result, out_dir, _ = invoke(tmp_path, bundle_fixture([item]))

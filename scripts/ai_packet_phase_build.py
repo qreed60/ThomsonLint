@@ -623,10 +623,13 @@ def prompt_for_packet(packet: dict[str, Any], context: dict[str, Any]) -> str:
         expected_target_type = packet["expected_target_type"]
         target_type_guidance = f"""
 ## Target Type Contract
-- Use target_type exactly as provided in request.json.
-- For this packet, target_type must be {expected_target_type}.
-- Do not replace target_type with component class words such as {SEMANTIC_TARGET_TYPE_EXAMPLES}.
-- Component class may be described in notes or evidence, but not in target_type.
+- Use target_type exactly as provided in request.json for component operating-current items.
+- For component operating-current items in this packet, target_type must be {expected_target_type}.
+- Do not replace component operating-current target_type with component class words such as {SEMANTIC_TARGET_TYPE_EXAMPLES}.
+- If the datasheet evidence is a connector current rating/capability rather than actual operating current, emit it as target_type connector_rating with field_name current_max.
+- Connector current ratings are rating/capability candidates only; they must not claim to resolve branch_current_a or any actual load/operating current.
+- Connector current ratings must include condition, especially wire gauge/contact condition when present, such as AC/DC, AWG #22.
+- Component class may be described in notes or evidence, but not in component operating-current target_type.
 """
     return f"""# {packet['packet_id']} - {packet['stage_name']}
 
@@ -897,7 +900,7 @@ def validate_outputs(
             if phrase not in prompt:
                 raise ValueError(f"{packet['packet_id']} prompt missing guardrail: {phrase}")
         if packet["packet_type"] == "datasheet_current_extraction":
-            for phrase in ("Use target_type exactly as provided in request.json", "target_type must be component_current_model", "Do not replace target_type with component class words"):
+            for phrase in ("Use target_type exactly as provided in request.json", "target_type must be component_current_model", "Do not replace component operating-current target_type with component class words", "Connector current ratings are rating/capability candidates only"):
                 if phrase not in prompt:
                     raise ValueError(f"{packet['packet_id']} prompt missing target_type guardrail: {phrase}")
         if status["packet_id"] != packet["packet_id"]:

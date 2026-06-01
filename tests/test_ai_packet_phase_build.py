@@ -348,10 +348,21 @@ def test_12b_prompt_requires_exact_component_current_model_target_type(tmp_path:
     prompt = (out_dir / packet["prompt_path"]).read_text(encoding="utf-8")
 
     assert packet["packet_type"] == "datasheet_current_extraction"
-    assert "Use target_type exactly as provided in request.json." in prompt
-    assert "For this packet, target_type must be component_current_model." in prompt
-    assert "Do not replace target_type with component class words such as connector, mosfet, capacitor, resistor, regulator, fuse, IC, or diode." in prompt
-    assert "Component class may be described in notes or evidence, but not in target_type." in prompt
+    assert "Use target_type exactly as provided in request.json for component operating-current items." in prompt
+    assert "For component operating-current items in this packet, target_type must be component_current_model." in prompt
+    assert "Do not replace component operating-current target_type with component class words such as connector, mosfet, capacitor, resistor, regulator, fuse, IC, or diode." in prompt
+    assert "Component class may be described in notes or evidence, but not in component operating-current target_type." in prompt
+
+
+def test_12b_prompt_routes_connector_current_rating_as_capability_not_branch_current(tmp_path: Path) -> None:
+    result, out_dir = invoke(tmp_path, [mdi("mdi_current", "branch_current_unknown", "component", "P4", refdes="P4")])
+    assert result.returncode == 0, result.stderr + result.stdout
+    prompt = (out_dir / only_packet(out_dir)["prompt_path"]).read_text(encoding="utf-8")
+
+    assert "emit it as target_type connector_rating with field_name current_max" in prompt
+    assert "Connector current ratings are rating/capability candidates only" in prompt
+    assert "must not claim to resolve branch_current_a or any actual load/operating current" in prompt
+    assert "especially wire gauge/contact condition when present, such as AC/DC, AWG #22" in prompt
 
 
 def test_12b_request_and_context_expose_expected_target_type(tmp_path: Path) -> None:
