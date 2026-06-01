@@ -1,0 +1,40 @@
+{
+  "project": "TestProject",
+  "schema_version": "ai_approval_decisions_v1",
+  "source_approval_queue": "generated from tests/fixtures/topology_ai_rating_non_empty/responses by PR32",
+  "decisions": [
+    {
+      "decision_id": "decision_pr45_fixture_r50_rating",
+      "approval_item_id": "approve_fc34228e2c5f",
+      "promotion_candidate_id": "promo_rating_model_252f04a475d9",
+      "decision": "approved",
+      "reviewer": "pr45_fixture",
+      "reviewed_at_utc": "2026-05-31T00:00:00Z",
+      "approval_note": "Fixture-only approval for one deterministic R50 fuse current rating candidate; dry-run preview only.",
+      "reason_code": null,
+      "safe_to_apply": false,
+      "source_queue_item": {
+        "review_type": "approve_add",
+        "priority": "medium",
+        "target_summary": "target_type=fuse, refdes=R50, field_name=current_max",
+        "candidate_summary": "1.5 A",
+        "core_summary": "no_core_match"
+      }
+    }
+  ],
+  "summary": {
+    "approval_queue_count": 1,
+    "decision_count": 1,
+    "approved_count": 1,
+    "rejected_count": 0,
+    "needs_info_count": 0,
+    "pending_count": 0,
+    "safe_to_apply_count": 0,
+    "error_count": 0,
+    "warning_count": 0
+  },
+  "errors": [],
+  "warnings": [
+    "Static PR45 fixture decision; not production approval and not safe for core apply."
+  ]
+}

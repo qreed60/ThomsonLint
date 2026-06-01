@@ -36,3 +36,8 @@ python -m json.tool exports/TestProject/phase_runs/topology_ai/<run-id>/pr37_ai_
 ```
 
 PR34 and later stages remain dry-run/candidate-only. They do not write core artifacts, merge addenda, apply promotions to core, rerun allocation/calculations, or set `safe_for_core_apply` / `ready_for_core_apply` true. Core apply remains future explicit work.
+
+PR45 adds a separate rating-model fixture under
+`tests/fixtures/topology_ai_rating_non_empty/`. Use that fixture when the goal
+is to exercise an accepted rating candidate rather than the current-model
+candidate in this PR44 fixture.

@@ -71,6 +71,24 @@ Run with response fixtures and explicit approval decisions:
   --approval-decisions tests/fixtures/topology_ai_non_empty/approval-decisions.json
 ```
 
+The current-model fixture and rating-model fixture are intentionally separate.
+For rating candidate coverage, use:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --allow-existing-outputs \
+  --responses-dir tests/fixtures/topology_ai_rating_non_empty/responses \
+  --approval-decisions tests/fixtures/topology_ai_rating_non_empty/approval-decisions.json
+```
+
+Both fixture sets are static offline JSON fixtures, not live AI output. The
+rating fixture uses an explicit fuse current rating and must not infer
+connector pins or regulator input/output side. Without `--approval-decisions`,
+PR33 writes pending decisions and PR34 has zero approved operations.
+
 PR34 and later stages remain dry-run/candidate-only. The driver does not apply candidates to core, merge addenda, rerun allocation/calculations, or mark core apply readiness true.
 
 ## Stage Order

@@ -1,0 +1,31 @@
+{
+  "packet_id": "12B-001",
+  "schema_version": "ai_extraction_result_v1",
+  "status": "completed",
+  "extracted_items": [
+    {
+      "item_id": "fixture_r50_fuse_rating_001",
+      "missing_data_item_ids": [
+        "mdi_manifest_branch_current_unknown_v3p3_mdi_branch_current_unknown_branch_br_v3p3_bottom_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation"
+      ],
+      "target_type": "fuse_rating",
+      "target_refdes": "R50",
+      "target_mpn": "WJC1206LJUMPFNR",
+      "field_name": "current_max",
+      "value": 1.5,
+      "unit": "A",
+      "condition": "fixture-only PR45 fuse current rating",
+      "basis": "datasheet",
+      "source_file": "tests/fixtures/topology_ai_rating_non_empty/fixture-not-live-ai.pdf",
+      "source_page": 1,
+      "evidence_quote": "Fixture-only cited fuse current rating 1.5 A for PR45 pipeline validation.",
+      "confidence": 0.92,
+      "human_review_needed": false
+    }
+  ],
+  "unknown_items": [],
+  "notes": [
+    "Static hand-authored fixture for PR45; not live AI output."
+  ],
+  "warnings": []
+}

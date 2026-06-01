@@ -1243,3 +1243,35 @@ The topology_ai driver now accepts explicit approval decisions:
 Default behavior is unchanged. Without `--approval-decisions`, PR33 writes pending decision templates and PR34 skips approved operations. The driver must never auto-approve candidates. With `--approval-decisions`, PR33 validates the explicit human-authored decision artifact against the PR32 approval queue, records the decision and validation artifacts in the run-local PR32 promotion directory, and PR34 consumes those recorded paths.
 
 PR44 remains review-only: no AI calls, no qwen_vision requirement, no response fabrication in normal runs, no core artifact writes, no addenda merge, no candidate apply to core, and no `safe_for_core_apply` / `ready_for_core_apply` true values.
+
+## PR45 — Non-Empty Rating Candidate Fixture and Driver Coverage v0
+
+PR45 adds a separate deterministic rating fixture workflow under
+`tests/fixtures/topology_ai_rating_non_empty/`. The response fixtures are
+static, hand-authored JSON files, not live AI output. They exercise PR27 through
+PR37 with one accepted `fuse_rating` / `current_max` item, one rating patch, one
+rating candidate, one rating adapter record, one isolated candidate rating
+normalization, one PR32 approval queue item, and one PR34 approved dry-run
+preview when explicit approval input is supplied.
+
+The current fixture and rating fixture are intentionally separate:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --allow-existing-outputs \
+  --responses-dir tests/fixtures/topology_ai_rating_non_empty/responses \
+  --approval-decisions tests/fixtures/topology_ai_rating_non_empty/approval-decisions.json
+```
+
+Default behavior remains unchanged. Without `--approval-decisions`, PR33 writes
+pending decision templates and PR34 skips approved operations. The driver must
+never auto-approve candidates. The rating fixture uses an explicit fuse target
+and must not infer connector pins or regulator side.
+
+PR45 remains review-only: no AI calls, no qwen_vision requirement, no response
+fabrication in normal runs, no core artifact writes, no addenda merge, no
+candidate apply to core, and no `safe_for_core_apply` /
+`ready_for_core_apply` true values.
