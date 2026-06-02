@@ -26,6 +26,7 @@ DEFAULT_MAX_ITEMS_PER_PACKET = 5
 MAX_ATTEMPTS = 2
 MAX_TARGET_EVIDENCE_ROWS = 5
 MAX_SCHEMATIC_SNIPPETS = 10
+MAX_CURRENT_DATASHEET_EVIDENCE_ROWS = 8
 SEMANTIC_TARGET_TYPE_EXAMPLES = "connector, mosfet, capacitor, resistor, regulator, fuse, IC, or diode"
 
 PACKET_LIFECYCLE = [
@@ -62,6 +63,15 @@ STAGES: dict[str, dict[str, str]] = {
         "packet_type": "datasheet_current_extraction",
         "target_type": "component_current_model",
         "required_output_schema": "component_current_model_v1",
+        "allowed_extracted_target_types": [
+            "component_current_model",
+            "connector_rating",
+            "connector_pin_rating",
+            "fuse_rating",
+            "regulator_rating",
+            "load_switch_rating",
+            "ferrite_rating",
+        ],
     },
     "12C": {
         "stage_name": "Datasheet Rating Extraction",
@@ -151,6 +161,8 @@ def json_safe(value: Any) -> Any:
         return None
     if isinstance(value, dict):
         return {str(key): json_safe(child) for key, child in value.items()}
+    if isinstance(value, (set, tuple)):
+        return [json_safe(child) for child in sorted(value, key=lambda child: str(child))]
     if isinstance(value, list):
         return [json_safe(child) for child in value]
     return value
@@ -400,6 +412,31 @@ def target_enrichment(refdes: str, bom_index: dict[str, list[dict[str, Any]]]) -
     }
 
 
+CURRENT_MODEL_TARGET_CATEGORIES = {
+    "branch_current_unknown",
+    "current_model_missing",
+    "rail_current_unknown",
+}
+
+def current_model_refdes_priority(refdes: str) -> tuple[int, Any]:
+    ref = str(refdes or "").upper()
+
+    # Prefer probable active/current-consuming parts for current-model packets.
+    # Passives and connectors can still be useful, but they should not suppress
+    # IC/load targets when those are present in affected_components.
+    if ref.startswith("U"):
+        return (0, refdes_sort_key(ref))
+    if ref.startswith("Q"):
+        return (1, refdes_sort_key(ref))
+    if ref.startswith(("D", "LED")):
+        return (2, refdes_sort_key(ref))
+    if ref.startswith(("P", "J")):
+        return (3, refdes_sort_key(ref))
+    if ref.startswith(("C", "R", "L", "FB", "TP")):
+        return (9, refdes_sort_key(ref))
+    return (5, refdes_sort_key(ref))
+
+
 def target_refdes(item: dict[str, Any]) -> str:
     if isinstance(item.get("refdes"), str):
         return item["refdes"]
@@ -409,8 +446,28 @@ def target_refdes(item: dict[str, Any]) -> str:
         return target_id
     components = [str(value) for value in as_list(item.get("affected_components")) if value]
     if components:
+        category = str(item.get("category") or "")
+        if category in CURRENT_MODEL_TARGET_CATEGORIES:
+            return sorted(components, key=current_model_refdes_priority)[0]
         return sorted(components, key=refdes_sort_key)[0]
     return str(target_id or item.get("normalized_target") or "project")
+
+
+def current_model_target_refdes_values(item: dict[str, Any]) -> list[str]:
+    components = [str(value) for value in as_list(item.get("affected_components")) if value]
+    if components:
+        active = [ref for ref in components if current_model_refdes_priority(ref)[0] <= 2]
+        connectors = [ref for ref in components if current_model_refdes_priority(ref)[0] == 3]
+        preferred = active or connectors or components
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for ref in sorted(preferred, key=current_model_refdes_priority):
+            key = ref.upper()
+            if key not in seen:
+                seen.add(key)
+                ordered.append(ref)
+        return ordered
+    return [target_refdes(item)]
 
 
 def route_item(item: dict[str, Any]) -> tuple[str | None, bool, str | None]:
@@ -425,10 +482,25 @@ def route_item(item: dict[str, Any]) -> tuple[str | None, bool, str | None]:
     return "12H", True, f"unsupported missing-data category routed to human review: {category or 'unknown'}"
 
 
-def group_key(item: dict[str, Any], stage_id: str, bom_index: dict[str, list[dict[str, Any]]]) -> tuple[str, str, str]:
+def group_keys(item: dict[str, Any], stage_id: str, bom_index: dict[str, list[dict[str, Any]]]) -> list[tuple[str, str, str]]:
+    if str(item.get("category") or "") in CURRENT_MODEL_TARGET_CATEGORIES:
+        keys: list[tuple[str, str, str]] = []
+        seen_group: set[str] = set()
+        for refdes in current_model_target_refdes_values(item):
+            mpn = target_enrichment(refdes, bom_index).get("target_mpn") or ""
+            group_id = f"mpn:{mpn}" if mpn else f"ref:{refdes.upper()}"
+            if group_id in seen_group:
+                continue
+            seen_group.add(group_id)
+            keys.append((stage_id, refdes, mpn))
+        return keys
     refdes = target_refdes(item)
     mpn = target_enrichment(refdes, bom_index).get("target_mpn") or ""
-    return stage_id, refdes, mpn
+    return [(stage_id, refdes, mpn)]
+
+
+def group_key(item: dict[str, Any], stage_id: str, bom_index: dict[str, list[dict[str, Any]]]) -> tuple[str, str, str]:
+    return group_keys(item, stage_id, bom_index)[0]
 
 
 def split_items(items: list[dict[str, Any]], max_items: int) -> list[list[dict[str, Any]]]:
@@ -474,6 +546,7 @@ def context_for_packet(
         "target_type": stage["target_type"],
         "expected_target_type": stage["target_type"],
         "allowed_target_type": stage["target_type"],
+        "allowed_extracted_target_types": stage.get("allowed_extracted_target_types", [stage["target_type"]]),
         "target_refdes": target_ref,
         "target_mpn": target_part,
         "target_manufacturer": target.get("target_manufacturer"),
@@ -516,7 +589,7 @@ def bounded_target_rows(data: dict[str, Any] | None, refdes: str) -> list[dict[s
     return rows[:20]
 
 
-def bounded_datasheet_evidence_rows(
+def _bounded_datasheet_evidence_rows_base(
     data: dict[str, Any] | None,
     refdes: str,
     mpn: str | None,
@@ -593,6 +666,267 @@ def bounded_datasheet_evidence_rows(
     return rows[:20]
 
 
+
+CURRENT_EVIDENCE_KEYWORDS = [
+    "supply current",
+    "static current",
+    "quiescent current",
+    "standby current",
+    "current consumption",
+    "operating current",
+    "positive supply current",
+    "low-level supply current",
+    "high-level supply current",
+    "normal mode",
+    "icc",
+    "icch",
+    "iccl",
+    "idd",
+    "iq",
+    "electrical characteristics",
+    "static characteristics",
+    "supply characteristics",
+    "current rating",
+    "rated current",
+    "current derating",
+    "current derating reference",
+    "applicable wires",
+    "wire size",
+    "awg",
+    "contact current",
+    "per contact",
+    "per circuit",
+    "temperature rise",
+    "carrying current",
+    "current capacity",
+    "product summary",
+    "maximum ratings",
+    "drain current",
+    "continuous drain current",
+    "id max",
+    "i d max",
+    "rds(on)",
+    "drain-source voltage",
+    "gate-source voltage",
+    "vds",
+    "vdss",
+    "vgs",
+    "load switch",
+    "maximum output current",
+    "iout(max)",
+    "hold current",
+    "trip current",
+    "fuse rating",
+    "allowable current",
+    "saturation current",
+    "irms",
+    "isat",
+    "average forward current",
+    "continuous forward current",
+]
+
+CURRENT_EVIDENCE_NEGATIVE_KEYWORDS = [
+    "absolute maximum",
+    "limiting values",
+    "stresses beyond",
+    "package outline",
+    "soldering",
+    "revision history",
+    "legal information",
+    "contents",
+    "test plug",
+    "pogo pin",
+    "not intended for continuous use",
+    "contact resistance",
+    "dielectric test",
+    "wire pullout",
+    "insertion force",
+    "packaging",
+    "idss",
+    "igss",
+    "gate leakage",
+    "typical characteristics",
+    "transfer characteristics",
+    "capacitance",
+    "gate charge",
+    "switching delay",
+]
+
+
+def datasheet_current_evidence_score(row: dict[str, Any]) -> int:
+    try:
+        text = json.dumps(json_safe(row), ensure_ascii=False).lower()
+    except TypeError:
+        text = str(row).lower()
+    score = 0
+
+    for term in CURRENT_EVIDENCE_KEYWORDS:
+        if term in text:
+            score += 10
+
+    for term in CURRENT_EVIDENCE_NEGATIVE_KEYWORDS:
+        if term in text:
+            score -= 12
+
+    rating_context_terms = (
+        "current rating",
+        "rated current",
+        "current derating",
+        "drain current",
+        "maximum output current",
+        "hold current",
+        "trip current",
+        "saturation current",
+        "average forward current",
+    )
+    if not any(term in text for term in rating_context_terms):
+        for term in ("output current", "input/output current", "current limit", "rated current", "load current", "short-circuit current"):
+            if term in text:
+                score -= 8
+
+    for term in ("test plug", "not intended for continuous use", "contact resistance", "leakage current", "idss", "igss"):
+        if term in text:
+            score -= 10
+
+    if row.get("evidence_block_id"):
+        score += 5
+    if row.get("page") is not None:
+        score += 3
+    if row.get("page") == 1:
+        score -= 4
+
+    return score
+
+
+def should_prioritize_current_evidence(items: list[dict[str, Any]]) -> bool:
+    return any(
+        str(item.get("category") or "") in CURRENT_MODEL_TARGET_CATEGORIES
+        for item in items
+    )
+
+
+def _walk_dicts(obj: Any):
+    if isinstance(obj, dict):
+        yield obj
+        for value in obj.values():
+            yield from _walk_dicts(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from _walk_dicts(value)
+
+
+def _token_matches_datasheet_doc(doc: dict[str, Any], tokens: set[str]) -> bool:
+    doc_values = set()
+
+    for key in ("matched_refdes", "reference_designators", "refdes"):
+        value = doc.get(key)
+        if isinstance(value, list):
+            doc_values.update(str(x).upper() for x in value if x is not None)
+        elif value is not None:
+            doc_values.add(str(value).upper())
+
+    for key in ("matched_mpn", "selected_mpn", "mpn", "filename", "document_id"):
+        value = doc.get(key)
+        if value is not None:
+            doc_values.add(str(value).upper())
+
+    normalized_doc_text = normalized_key(" ".join(sorted(str(value) for value in doc_values)))
+    return any(normalized_key(str(token)) in normalized_doc_text for token in tokens if token)
+
+
+def current_datasheet_rows_from_index(
+    data: dict[str, Any] | None,
+    refdes: str,
+    target_part: str | None,
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(data, dict):
+        return []
+
+    tokens = {str(refdes)}
+    if target_part:
+        tokens.add(str(target_part))
+
+    rows: list[dict[str, Any]] = []
+
+    for doc in _walk_dicts(data):
+        if not isinstance(doc, dict):
+            continue
+        if not isinstance(doc.get("page_evidence_blocks"), list):
+            continue
+        if not _token_matches_datasheet_doc(doc, tokens):
+            continue
+
+        for block in doc.get("page_evidence_blocks", []):
+            if not isinstance(block, dict):
+                continue
+
+            row = {
+                **block,
+                "document_id": doc.get("document_id"),
+                "filename": doc.get("filename"),
+                "matched_mpn": doc.get("matched_mpn"),
+                "matched_refdes": doc.get("matched_refdes"),
+                "source_file": block.get("source_file") or doc.get("source_file"),
+                "evidence_block_id": block.get("evidence_block_id") or block.get("block_id"),
+                "evidence_quote": block.get("evidence_quote") or block.get("text_snippet") or block.get("text"),
+                "text_snippet": block.get("text_snippet") or block.get("evidence_quote") or block.get("text"),
+                "text_extraction_status": doc.get("text_extraction_status"),
+            }
+
+            if datasheet_current_evidence_score(row) > 0:
+                rows.append(row)
+
+    rows = sorted(rows, key=datasheet_current_evidence_score, reverse=True)
+
+    deduped = []
+    seen = set()
+    for row in rows:
+        key = (
+            row.get("document_id"),
+            row.get("evidence_block_id"),
+            row.get("page"),
+            row.get("source_file"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+
+    return deduped[:MAX_CURRENT_DATASHEET_EVIDENCE_ROWS]
+
+
+def bounded_datasheet_evidence_rows(
+    data: dict[str, Any] | None,
+    refdes: str,
+    target_part: str | None,
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    base_rows = _bounded_datasheet_evidence_rows_base(data, refdes, target_part, items)
+
+    if not should_prioritize_current_evidence(items):
+        return base_rows
+
+    current_rows = current_datasheet_rows_from_index(data, refdes, target_part, items)
+    combined = current_rows + base_rows
+
+    deduped = []
+    seen = set()
+    for row in combined:
+        key = (
+            row.get("document_id"),
+            row.get("evidence_block_id"),
+            row.get("page"),
+            row.get("source_file"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+
+    return deduped[:MAX_CURRENT_DATASHEET_EVIDENCE_ROWS]
+
+
 def bounded_link_rows(data: dict[str, Any] | None, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not isinstance(data, dict):
         return []
@@ -627,7 +961,9 @@ def prompt_for_packet(packet: dict[str, Any], context: dict[str, Any]) -> str:
 - For component operating-current items in this packet, target_type must be {expected_target_type}.
 - Do not replace component operating-current target_type with component class words such as {SEMANTIC_TARGET_TYPE_EXAMPLES}.
 - If the datasheet evidence is a connector current rating/capability rather than actual operating current, emit it as target_type connector_rating with field_name current_max.
+- If the connector evidence is explicitly per-pin, use target_type connector_pin_rating with field_name pin_current_max.
 - Connector current ratings are rating/capability candidates only; they must not claim to resolve branch_current_a or any actual load/operating current.
+- If a rating/capability is extracted, branch_current_a remains unknown unless explicit board operating-current evidence is present.
 - Connector current ratings must include condition, especially wire gauge/contact condition when present, such as AC/DC, AWG #22.
 - Component class may be described in notes or evidence, but not in component operating-current target_type.
 """
@@ -685,6 +1021,7 @@ def packet_request(packet: dict[str, Any], context: dict[str, Any]) -> dict[str,
         "target_type": packet["target_type"],
         "expected_target_type": packet["expected_target_type"],
         "allowed_target_type": packet["expected_target_type"],
+        "allowed_extracted_target_types": packet.get("allowed_extracted_target_types", [packet["target_type"]]),
         "target_refdes": packet["target_refdes"],
         "target_mpn": packet.get("target_mpn"),
         "target_manufacturer": packet.get("target_manufacturer"),
@@ -752,7 +1089,8 @@ def build_packets(
             continue
         if reason:
             warnings.append(f"{item_id(item)} routed to {stage_id}: {reason}")
-        grouped.setdefault(group_key(item, stage_id, bom_index), []).append(item)
+        for key in group_keys(item, stage_id, bom_index):
+            grouped.setdefault(key, []).append(item)
 
     packet_entries: list[dict[str, Any]] = []
     packet_files: list[tuple[dict[str, Any], dict[str, Any], str, dict[str, Any]]] = []
@@ -777,6 +1115,7 @@ def build_packets(
                 "target_type": stage["target_type"],
                 "expected_target_type": stage["target_type"],
                 "allowed_target_type": stage["target_type"],
+                "allowed_extracted_target_types": stage.get("allowed_extracted_target_types", [stage["target_type"]]),
                 "target_refdes": refdes,
                 "target_mpn": target.get("target_mpn"),
                 "target_manufacturer": target.get("target_manufacturer"),
@@ -877,6 +1216,31 @@ def build_packets(
     return queue, phase_status, phase_summary, packet_files
 
 
+def apply_packet_contract_defaults(packet: dict[str, Any], context: dict[str, Any]) -> None:
+    """Fill derived packet contract fields before validation/write.
+
+    12B packets may emit rating candidates as extracted_items while preserving
+    branch/current unknowns under the original component_current_model target.
+    """
+    if packet.get("packet_type") == "datasheet_current_extraction":
+        allowed = [
+            "component_current_model",
+            "connector_rating",
+            "connector_pin_rating",
+            "fuse_rating",
+            "regulator_rating",
+            "load_switch_rating",
+            "ferrite_rating",
+        ]
+        packet["allowed_extracted_target_types"] = allowed
+        context["allowed_extracted_target_types"] = allowed
+    else:
+        allowed = [packet.get("target_type")]
+        packet.setdefault("allowed_extracted_target_types", allowed)
+        context.setdefault("allowed_extracted_target_types", allowed)
+
+
+
 def validate_outputs(
     queue: dict[str, Any],
     packet_files: list[tuple[dict[str, Any], dict[str, Any], str, dict[str, Any]]],
@@ -886,6 +1250,7 @@ def validate_outputs(
     if len(packet_ids) != len(set(packet_ids)):
         raise ValueError("packet IDs are not unique")
     for packet, context, prompt, status in packet_files:
+        apply_packet_contract_defaults(packet, context)
         if not packet.get("required_output_schema"):
             raise ValueError(f"{packet['packet_id']} missing required_output_schema")
         if packet.get("expected_target_type") != packet.get("target_type"):
@@ -900,7 +1265,7 @@ def validate_outputs(
             if phrase not in prompt:
                 raise ValueError(f"{packet['packet_id']} prompt missing guardrail: {phrase}")
         if packet["packet_type"] == "datasheet_current_extraction":
-            for phrase in ("Use target_type exactly as provided in request.json", "target_type must be component_current_model", "Do not replace component operating-current target_type with component class words", "Connector current ratings are rating/capability candidates only"):
+            for phrase in ("Use target_type exactly as provided in request.json", "target_type must be component_current_model", "Do not replace component operating-current target_type with component class words", "Connector current ratings are rating/capability candidates only", "branch_current_a remains unknown"):
                 if phrase not in prompt:
                     raise ValueError(f"{packet['packet_id']} prompt missing target_type guardrail: {phrase}")
         if status["packet_id"] != packet["packet_id"]:

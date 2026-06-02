@@ -4,6 +4,7 @@ import json
 import math
 import subprocess
 import sys
+import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +127,7 @@ def invoke(
     with_schematic: bool = False,
     schematic: dict[str, Any] | None = None,
     with_datasheet_manifest: bool = True,
+    datasheet_evidence_index: dict[str, Any] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     manifest = write_json(tmp_path / "manifest.json", manifest_fixture(items))
     out_dir = tmp_path / "exports" / "TestProject" / "ai_packets" / "phase_12"
@@ -149,6 +151,8 @@ def invoke(
         args.extend(["--schematic-export", str(write_json(tmp_path / "schematic.json", schematic if schematic is not None else schematic_fixture()))])
     if with_datasheet_manifest:
         args.extend(["--datasheet-manifest", str(write_json(tmp_path / "datasheets.json", {"datasheets": []}))])
+    if datasheet_evidence_index is not None:
+        args.extend(["--datasheet-evidence-index", str(write_json(tmp_path / "datasheet-evidence-index.json", datasheet_evidence_index))])
     return run_build(*args), out_dir
 
 
@@ -179,6 +183,46 @@ def all_values(value: Any) -> list[Any]:
         for child in value:
             values.extend(all_values(child))
     return values
+
+
+def load_packet_build_module():
+    spec = importlib.util.spec_from_file_location("ai_packet_phase_build", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def current_evidence_index() -> dict[str, Any]:
+    return {
+        "documents": [
+            {
+                "document_id": "doc_u2",
+                "filename": "MCU-456.pdf",
+                "source_file": "datasheets/MCU-456.pdf",
+                "matched_mpn": "MCU-456",
+                "matched_refdes": ["U2"],
+                "text_extraction_status": "ok",
+                "page_evidence_blocks": [
+                    {
+                        "evidence_block_id": "p1_general",
+                        "page": 1,
+                        "text_snippet": "General description for the MCU-456 controller.",
+                    },
+                    {
+                        "evidence_block_id": "p4_absmax",
+                        "page": 4,
+                        "text_snippet": "Absolute maximum ratings: output current IO 20 mA. Stresses beyond ratings may damage the device.",
+                    },
+                    {
+                        "evidence_block_id": "p8_static",
+                        "page": 8,
+                        "text_snippet": "Electrical characteristics. Static characteristics. ICC supply current, Max 10 uA.",
+                    },
+                ],
+            }
+        ]
+    }
 
 
 def test_missing_manifest_exits_2(tmp_path: Path) -> None:
@@ -266,12 +310,75 @@ def test_output_json_has_no_nan_or_infinity(tmp_path: Path) -> None:
             assert not (isinstance(value, float) and not math.isfinite(value))
 
 
+def test_current_evidence_scoring_is_json_safe_for_sets_lists_dicts_and_nulls() -> None:
+    module = load_packet_build_module()
+    row = {
+        "terms": {"supply current", "static characteristics"},
+        "nested": [{"value": None}, {"quote": "ICC supply current Max 10 uA"}],
+    }
+    assert module.datasheet_current_evidence_score(row) > 0
+
+
+def test_pr26_builds_with_nested_page_evidence_blocks(tmp_path: Path) -> None:
+    result, out_dir = invoke(
+        tmp_path,
+        [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")],
+        datasheet_evidence_index={"wrapper": {"documents": current_evidence_index()["documents"]}},
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    context = read_json(out_dir / only_packet(out_dir)["context_path"])
+    assert any(row.get("evidence_block_id") == "p8_static" for row in context["datasheet_references"])
+
+
 def test_branch_current_unknown_routes_to_stage_12b_current_extraction(tmp_path: Path) -> None:
     result, out_dir = invoke(tmp_path, [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")])
     assert result.returncode == 0, result.stderr + result.stdout
     packet = only_packet(out_dir)
     assert packet["stage_id"] == "12B"
     assert packet["packet_type"] == "datasheet_current_extraction"
+
+
+def test_branch_current_unknown_prefers_active_affected_component_over_passives(tmp_path: Path) -> None:
+    result, out_dir = invoke(
+        tmp_path,
+        [
+            mdi(
+                "mdi_branch",
+                "branch_current_unknown",
+                "branch",
+                "br_v3p3",
+                affected_components=["C10", "R4", "P1", "U2"],
+            )
+        ],
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert only_packet(out_dir)["target_refdes"] == "U2"
+
+
+def test_current_packetization_covers_distinct_active_ic_bom_parts(tmp_path: Path) -> None:
+    bom = {
+        "components": [
+            {"refdes": "U40, U41", "mpn": "74LVC157A", "manufacturer": "Nexperia", "description": "mux"},
+            {"refdes": "U46", "mpn": "TS5A22362", "manufacturer": "TI", "description": "mux"},
+            {"refdes": "U50", "mpn": "PCA9515A", "manufacturer": "NXP", "description": "repeater"},
+            {"refdes": "C40", "mpn": "CAP-1", "manufacturer": "CapCo", "description": "capacitor"},
+        ]
+    }
+    result, out_dir = invoke(
+        tmp_path,
+        [
+            mdi(
+                "mdi_branch",
+                "branch_current_unknown",
+                "branch",
+                "br_v3p3",
+                affected_components=["C40", "U40", "U41", "U46", "U50"],
+            )
+        ],
+        bom=bom,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert {packet["target_refdes"] for packet in packets(out_dir)} == {"U40", "U46", "U50"}
 
 
 def test_current_model_missing_routes_to_stage_12b(tmp_path: Path) -> None:
@@ -381,6 +488,44 @@ def test_12b_request_and_context_expose_expected_target_type(tmp_path: Path) -> 
     assert context["target_type"] == "component_current_model"
     assert context["expected_target_type"] == "component_current_model"
     assert context["allowed_target_type"] == "component_current_model"
+    allowed = [
+        "component_current_model",
+        "connector_rating",
+        "connector_pin_rating",
+        "fuse_rating",
+        "regulator_rating",
+        "load_switch_rating",
+        "ferrite_rating",
+    ]
+    assert request["allowed_extracted_target_types"] == allowed
+    assert context["allowed_extracted_target_types"] == allowed
+
+
+def test_12b_context_prioritizes_current_datasheet_evidence(tmp_path: Path) -> None:
+    result, out_dir = invoke(
+        tmp_path,
+        [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")],
+        datasheet_evidence_index=current_evidence_index(),
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    context = read_json(out_dir / only_packet(out_dir)["context_path"])
+    rows = context["datasheet_references"]
+    assert rows[0]["evidence_block_id"] == "p8_static"
+    assert "ICC supply current" in rows[0]["evidence_quote"]
+
+
+def test_12b_context_does_not_rank_absolute_max_above_supply_characteristics(tmp_path: Path) -> None:
+    result, out_dir = invoke(
+        tmp_path,
+        [mdi("mdi_current", "branch_current_unknown", "component", "U2", refdes="U2")],
+        datasheet_evidence_index=current_evidence_index(),
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    context = read_json(out_dir / only_packet(out_dir)["context_path"])
+    ids = [row.get("evidence_block_id") for row in context["datasheet_references"]]
+    assert ids[0] == "p8_static"
+    if "p4_absmax" in ids:
+        assert ids.index("p8_static") < ids.index("p4_absmax")
 
 
 def test_prompt_forbids_findings_pass_fail_and_compliance(tmp_path: Path) -> None:
