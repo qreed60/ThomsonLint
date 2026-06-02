@@ -592,7 +592,7 @@ def test_validate_only_can_copy_external_decisions_to_safe_out_path(tmp_path: Pa
             "reviewer": "fixture",
             "reviewed_at_utc": "2026-05-31T00:00:00Z",
             "approval_note": "approved fixture decision",
-            "reason_code": None,
+            "reason_code": "approved_engineer_verified",
             "safe_to_apply": False,
             "source_queue_item": {"review_type": "approve_add", "priority": "high", "target_summary": "", "candidate_summary": "", "core_summary": ""},
         },
@@ -668,10 +668,10 @@ def test_unknown_approval_item_is_invalid(tmp_path: Path) -> None:
             "approval_item_id": "aq_999",
             "promotion_candidate_id": None,
             "decision": "approved",
-            "reviewer": None,
+            "reviewer": "engineer-1",
             "reviewed_at_utc": None,
             "approval_note": "note",
-            "reason_code": None,
+            "reason_code": "approved_engineer_verified",
             "safe_to_apply": False,
             "source_queue_item": {"review_type": "", "priority": "", "target_summary": "", "candidate_summary": "", "core_summary": ""},
         },
@@ -978,7 +978,7 @@ def test_valid_reviewed_at_utc_is_accepted(tmp_path: Path) -> None:
             "reviewer": "engineer-1",
             "reviewed_at_utc": "2026-05-30T12:00:00Z",
             "approval_note": "verified",
-            "reason_code": None,
+            "reason_code": "approved_engineer_verified",
             "safe_to_apply": False,
             "source_queue_item": {"review_type": "", "priority": "", "target_summary": "", "candidate_summary": "", "core_summary": ""},
         },
@@ -1008,10 +1008,10 @@ def test_status_failed_blocks_validation_or_marks_invalid(tmp_path: Path) -> Non
             "approval_item_id": "aq_001",
             "promotion_candidate_id": "pc_u2_v3p3_max",
             "decision": "approved",
-            "reviewer": None,
+            "reviewer": "engineer-1",
             "reviewed_at_utc": None,
             "approval_note": "note",
-            "reason_code": None,
+            "reason_code": "approved_engineer_verified",
             "safe_to_apply": False,
             "source_queue_item": {"review_type": "", "priority": "", "target_summary": "", "candidate_summary": "", "core_summary": ""},
         },
@@ -1074,10 +1074,10 @@ def test_safe_for_future_apply_stage_is_always_false(tmp_path: Path) -> None:
             "approval_item_id": "aq_001",
             "promotion_candidate_id": "pc_u2_v3p3_max",
             "decision": "approved",
-            "reviewer": None,
+            "reviewer": "engineer-1",
             "reviewed_at_utc": None,
             "approval_note": "note",
-            "reason_code": None,
+            "reason_code": "approved_engineer_verified",
             "safe_to_apply": False,
             "source_queue_item": {"review_type": "", "priority": "", "target_summary": "", "candidate_summary": "", "core_summary": ""},
         },
@@ -1216,6 +1216,179 @@ def test_no_apply_instructions_are_emitted(tmp_path: Path) -> None:
     artifact = read_json(promo_dir / "ai-approval-decisions.json")
     for d in artifact["decisions"]:
         assert d.get("safe_to_apply") is not True
+
+
+# ---------------------------------------------------------------------------
+# Phase 11B path-based approval review commands
+# ---------------------------------------------------------------------------
+
+
+def phase11_paths(tmp_path: Path) -> tuple[Path, Path, Path]:
+    queue = approval_queue_fixture(tmp_path)
+    decisions = decisions_fixture(
+        tmp_path,
+        decisions=[
+            {
+                "decision_id": "decision_aq001",
+                "approval_item_id": "aq_001",
+                "promotion_candidate_id": "pc_u2_v3p3_max",
+                "decision": "pending",
+                "reviewer": None,
+                "reviewed_at_utc": None,
+                "approval_note": None,
+                "reason_code": None,
+                "safe_to_apply": False,
+                "source_queue_item": {"review_type": "approve_add", "priority": "high", "target_summary": "V3P3 component U2 max current", "candidate_summary": "AI-extracted 85 mA from datasheet", "core_summary": "no core match"},
+            },
+            {
+                "decision_id": "decision_aq002",
+                "approval_item_id": "aq_002",
+                "promotion_candidate_id": "pc_f1_hold",
+                "decision": "pending",
+                "reviewer": None,
+                "reviewed_at_utc": None,
+                "approval_note": None,
+                "reason_code": None,
+                "safe_to_apply": False,
+                "source_queue_item": {"review_type": "resolve_conflict", "priority": "medium", "target_summary": "F1 fuse hold current", "candidate_summary": "AI-extracted 1.1 A", "core_summary": "core has 1.0 A"},
+            },
+        ],
+    )
+    out_dir = tmp_path / "exports" / "TestProject" / "phase11"
+    out_dir.mkdir(parents=True)
+    return queue, decisions, out_dir
+
+
+def test_phase11_list_command_works(tmp_path: Path) -> None:
+    queue, decisions, _ = phase11_paths(tmp_path)
+    result = run_editor("--approval-queue", str(queue), "--decisions-in", str(decisions), "--list")
+    assert result.returncode == 0, result.stderr
+    assert "approval_item_id: aq_001" in result.stdout
+    assert "decision_id: decision_aq001" in result.stdout
+    assert "evidence_refs:" in result.stdout
+
+
+def test_phase11_show_command_works_for_known_item(tmp_path: Path) -> None:
+    queue, decisions, _ = phase11_paths(tmp_path)
+    result = run_editor("--approval-queue", str(queue), "--decisions-in", str(decisions), "--show", "aq_001")
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["approval_queue_item"]["approval_item_id"] == "aq_001"
+    assert payload["decision"]["decision_id"] == "decision_aq001"
+    assert payload["recommendation"]["rating_capability_not_branch_current"] is True
+
+
+def test_phase11_show_unknown_item_fails(tmp_path: Path) -> None:
+    queue, decisions, _ = phase11_paths(tmp_path)
+    result = run_editor("--approval-queue", str(queue), "--decisions-in", str(decisions), "--show", "missing")
+    assert result.returncode == 2
+    assert "unknown approval_item_id=missing" in result.stderr
+
+
+def test_phase11_approve_writes_valid_decision(tmp_path: Path) -> None:
+    queue, decisions, out_dir = phase11_paths(tmp_path)
+    out = out_dir / "decisions.review.json"
+    result = run_editor(
+        "--approval-queue", str(queue),
+        "--decisions-in", str(decisions),
+        "--decisions-out", str(out),
+        "--approve", "aq_001",
+        "--reviewer", "Engineer",
+        "--reason-code", "datasheet_rating_verified",
+        "--approval-note", "Approve as rating only.",
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    artifact = read_json(out)
+    row = [d for d in artifact["decisions"] if d["approval_item_id"] == "aq_001"][0]
+    assert row["decision"] == "approved"
+    assert row["reviewer"] == "Engineer"
+    assert row["reason_code"] == "datasheet_rating_verified"
+    assert row["approval_note"] == "Approve as rating only."
+    assert row["reviewed_at_utc"].endswith("Z")
+    assert row["safe_to_apply"] is False
+
+
+def test_phase11_reject_and_needs_info_write_valid_decisions(tmp_path: Path) -> None:
+    queue, decisions, out_dir = phase11_paths(tmp_path)
+    rejected = out_dir / "rejected.json"
+    result_reject = run_editor(
+        "--approval-queue", str(queue), "--decisions-in", str(decisions), "--decisions-out", str(rejected),
+        "--reject", "aq_001", "--reviewer", "Engineer", "--reason-code", "rejected_wrong_target", "--approval-note", "Wrong target.",
+    )
+    assert result_reject.returncode == 0, result_reject.stderr + result_reject.stdout
+    assert [d for d in read_json(rejected)["decisions"] if d["approval_item_id"] == "aq_001"][0]["decision"] == "rejected"
+
+    needs_info = out_dir / "needs-info.json"
+    result_needs = run_editor(
+        "--approval-queue", str(queue), "--decisions-in", str(decisions), "--decisions-out", str(needs_info),
+        "--needs-info", "aq_001", "--reviewer", "Engineer", "--reason-code", "needs_info_ambiguous_condition", "--approval-note", "Need condition.",
+    )
+    assert result_needs.returncode == 0, result_needs.stderr + result_needs.stdout
+    assert [d for d in read_json(needs_info)["decisions"] if d["approval_item_id"] == "aq_001"][0]["decision"] == "needs_info"
+
+
+def test_phase11_pending_can_reset_without_reviewer_requirements(tmp_path: Path) -> None:
+    queue, decisions, out_dir = phase11_paths(tmp_path)
+    approved = out_dir / "approved.json"
+    reset = out_dir / "reset.json"
+    assert run_editor("--approval-queue", str(queue), "--decisions-in", str(decisions), "--decisions-out", str(approved), "--approve", "aq_001", "--reviewer", "Engineer", "--reason-code", "datasheet_rating_verified", "--approval-note", "ok").returncode == 0
+    result = run_editor("--approval-queue", str(queue), "--decisions-in", str(approved), "--decisions-out", str(reset), "--pending", "aq_001")
+    assert result.returncode == 0, result.stderr + result.stdout
+    row = [d for d in read_json(reset)["decisions"] if d["approval_item_id"] == "aq_001"][0]
+    assert row["decision"] == "pending"
+    assert row["reviewer"] is None
+
+
+def test_phase11_approve_requires_reviewer_reason_and_note(tmp_path: Path) -> None:
+    queue, decisions, out_dir = phase11_paths(tmp_path)
+    base = ["--approval-queue", str(queue), "--decisions-in", str(decisions), "--decisions-out", str(out_dir / "out.json"), "--approve", "aq_001"]
+    assert run_editor(*base, "--reason-code", "datasheet_rating_verified", "--approval-note", "ok").returncode == 2
+    assert run_editor(*base, "--reviewer", "Engineer", "--approval-note", "ok").returncode == 2
+    assert run_editor(*base, "--reviewer", "Engineer", "--reason-code", "datasheet_rating_verified").returncode == 2
+
+
+def test_phase11_edit_unknown_item_fails(tmp_path: Path) -> None:
+    queue, decisions, out_dir = phase11_paths(tmp_path)
+    result = run_editor("--approval-queue", str(queue), "--decisions-in", str(decisions), "--decisions-out", str(out_dir / "out.json"), "--approve", "missing", "--reviewer", "Engineer", "--reason-code", "datasheet_rating_verified", "--approval-note", "ok")
+    assert result.returncode == 2
+    assert "unknown approval_item_id=missing" in result.stderr
+
+
+def test_phase11_duplicate_and_safe_to_apply_validation(tmp_path: Path) -> None:
+    queue, _, out_dir = phase11_paths(tmp_path)
+    duplicate_decisions = out_dir / "duplicates.json"
+    write_json(
+        duplicate_decisions,
+        {
+            "project": "TestProject",
+            "schema_version": "ai_approval_decisions_v1",
+            "decisions": [
+                {"decision_id": "d1", "approval_item_id": "aq_001", "promotion_candidate_id": "pc_u2_v3p3_max", "decision": "pending", "reviewer": None, "reviewed_at_utc": None, "approval_note": None, "reason_code": None, "safe_to_apply": False, "source_queue_item": {}},
+                {"decision_id": "d2", "approval_item_id": "aq_001", "promotion_candidate_id": "pc_u2_v3p3_max", "decision": "rejected", "reviewer": "Engineer", "reviewed_at_utc": "2026-06-02T00:00:00Z", "approval_note": "no", "reason_code": "rejected_wrong_target", "safe_to_apply": True, "source_queue_item": {}},
+            ],
+        },
+    )
+    result = run_editor("--approval-queue", str(queue), "--decisions-in", str(duplicate_decisions), "--validate")
+    assert result.returncode == 1
+    assert "duplicates=1" in result.stdout
+    assert "safe_to_apply=1" in result.stdout
+
+
+def test_phase11_decisions_out_does_not_modify_decisions_in_and_summary_is_generated(tmp_path: Path) -> None:
+    queue, decisions, out_dir = phase11_paths(tmp_path)
+    before = decisions.read_text(encoding="utf-8")
+    out = out_dir / "decisions.review.json"
+    result = run_editor("--approval-queue", str(queue), "--decisions-in", str(decisions), "--decisions-out", str(out), "--approve", "aq_001", "--reviewer", "Engineer", "--reason-code", "datasheet_rating_verified", "--approval-note", "ok")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert decisions.read_text(encoding="utf-8") == before
+    summary = out_dir / "summary.txt"
+    validate = run_editor("--approval-queue", str(queue), "--decisions-in", str(out), "--validate", "--summary-out", str(summary))
+    assert validate.returncode == 0, validate.stderr + validate.stdout
+    assert summary.exists()
+    assert (out_dir / "summary.json").exists()
+    text = summary.read_text(encoding="utf-8")
+    assert "no_core_artifacts_modified=True" in text
+    assert "apply_stage_run=False" in text
 
 
 # ---------------------------------------------------------------------------
