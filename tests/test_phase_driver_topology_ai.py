@@ -190,7 +190,7 @@ def fake_run_creating_outputs(command: list[str], **_: Any) -> subprocess.Comple
             packet_dir = Path(command[command.index("--packet-dir") + 1])
             raw = packet_dir / "packets" / "packet_001" / "raw_response.json"
             raw.parent.mkdir(parents=True, exist_ok=True)
-            raw.write_text(json.dumps({"packet_id": "packet_001", "schema_version": "ai_extraction_result_v1", "status": "completed", "extracted_items": [], "unknown_items": []}), encoding="utf-8")
+            raw.write_text(json.dumps({"packet_id": "packet_001", "schema_version": "ai_extraction_result_v1", "status": "completed", "extracted_items": [], "unknown_items": [], "notes": [], "warnings": []}), encoding="utf-8")
     return fake_completed(command)
 
 
