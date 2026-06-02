@@ -842,7 +842,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validate", action="store_true", help="Validate decisions in Phase 11B path-based mode")
     parser.add_argument("--summary-out", default=None, help="Write a Phase 11B decision summary text file")
     parser.add_argument("--out", default=None, help="Output path for decisions artifact (default: <promotion-dir>/ai-approval-decisions.json)")
-    parser.add_argument("--validate-out", default=None, help="Output path for validation artifact (default: <promotion-dir>/ai-approval-decision-validation.json)")
+    parser.add_argument("--validate-out", "--validation-out", dest="validate_out", default=None, help="Output path for validation artifact (default: <promotion-dir>/ai-approval-decision-validation.json)")
 
     # Template mode
     parser.add_argument("--decision-template", action="store_true", help="Create pending decision template for every approval queue item")
@@ -947,6 +947,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.validate:
             validation = validate_decisions_phase11(decisions_data, approval_queue_data)
             validation["source_decisions"] = str(decisions_in) if decisions_in else None
+            validate_out = Path(args.validate_out).resolve() if args.validate_out else (queue_path.parent / "ai-approval-decision-validation.json").resolve()
+            try:
+                verify_output_path(validate_out, validate_out.parent, project_name)
+            except ValueError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 2
+            write_json(validate_out, validation)
             if args.summary_out:
                 write_decision_summary(Path(args.summary_out), validation)
                 print(f"wrote {args.summary_out}")

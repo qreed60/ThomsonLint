@@ -1391,6 +1391,36 @@ def test_phase11_decisions_out_does_not_modify_decisions_in_and_summary_is_gener
     assert "apply_stage_run=False" in text
 
 
+def test_phase11_validate_writes_review_validation_artifact(tmp_path: Path) -> None:
+    queue, decisions, out_dir = phase11_paths(tmp_path)
+    reviewed = out_dir / "ai-approval-decisions.review.json"
+    validation_out = out_dir / "ai-approval-decision-validation.review.json"
+    summary = out_dir / "ai-approval-decision-summary.review.txt"
+    assert run_editor(
+        "--approval-queue", str(queue),
+        "--decisions-in", str(decisions),
+        "--decisions-out", str(reviewed),
+        "--approve", "aq_001",
+        "--reviewer", "Engineer",
+        "--reason-code", "datasheet_rating_verified",
+        "--approval-note", "rating only, not branch_current_a",
+    ).returncode == 0
+    result = run_editor(
+        "--approval-queue", str(queue),
+        "--decisions-in", str(reviewed),
+        "--validate",
+        "--validation-out", str(validation_out),
+        "--summary-out", str(summary),
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    artifact = read_json(validation_out)
+    assert artifact["source_decisions"] == str(reviewed.resolve())
+    assert artifact["validation_pass"] is True
+    assert artifact["summary"]["approved_count"] == 1
+    assert artifact["summary"]["safe_to_apply_count"] == 0
+    assert summary.exists()
+
+
 # ---------------------------------------------------------------------------
 # Tests 45-47: Determinism and stability
 # ---------------------------------------------------------------------------

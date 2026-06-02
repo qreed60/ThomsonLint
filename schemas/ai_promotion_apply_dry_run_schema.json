@@ -62,7 +62,7 @@
     },
     "operation": {
       "type": "object",
-      "required": ["operation_id", "promotion_candidate_id", "approval_item_id", "decision_id", "candidate_kind", "dry_run_operation", "operation_status", "dry_run_only", "writes_core_artifact", "safe_to_apply_in_pr34", "requires_future_apply_stage", "target_identity", "candidate_value", "core_match", "approval", "preview_target", "blockers", "warnings"],
+      "required": ["operation_id", "promotion_candidate_id", "approval_item_id", "decision_id", "candidate_kind", "dry_run_operation", "operation_status", "dry_run_only", "writes_core_artifact", "safe_to_apply_in_pr34", "requires_future_apply_stage", "target_identity", "candidate_value", "core_match", "approval", "preview_target", "operator_preview", "blockers", "warnings"],
       "properties": {
         "operation_id": {"type": "string"},
         "promotion_candidate_id": {"type": ["string", "null"]},
@@ -80,6 +80,7 @@
         "core_match": {"$ref": "#/definitions/jsonObject"},
         "approval": {"$ref": "#/definitions/jsonObject"},
         "preview_target": {"$ref": "#/definitions/jsonObject"},
+        "operator_preview": {"$ref": "#/definitions/jsonObject"},
         "blockers": {"type": "array", "items": {"type": "string"}},
         "warnings": {"type": "array", "items": {"type": "string"}}
       },
@@ -111,7 +112,7 @@
     },
     "summary": {
       "type": "object",
-      "required": ["approval_queue_count", "decision_count", "approved_decision_count", "rejected_decision_count", "needs_info_decision_count", "pending_decision_count", "valid_approved_decision_count", "invalid_approved_decision_count", "dry_run_operation_count", "current_model_operation_count", "rating_model_operation_count", "addenda_operation_count", "would_add_count", "would_update_count", "would_skip_duplicate_count", "would_block_conflict_count", "blocked_operation_count", "skipped_decision_count", "core_current_missing", "core_rating_missing", "applied_anything", "wrote_core_artifacts", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "error_count", "warning_count"],
+      "required": ["approval_queue_count", "decision_count", "approved_decision_count", "rejected_decision_count", "needs_info_decision_count", "pending_decision_count", "valid_approved_decision_count", "invalid_approved_decision_count", "dry_run_operation_count", "current_model_operation_count", "rating_model_operation_count", "addenda_operation_count", "would_add_count", "would_update_count", "would_skip_duplicate_count", "would_block_conflict_count", "blocked_operation_count", "skipped_decision_count", "core_current_missing", "core_rating_missing", "applied_anything", "wrote_core_artifacts", "ran_ingestion", "ran_current_allocation", "ran_calculations", "ran_post_promotion_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "requires_future_apply_stage", "do_not_apply_yet", "error_count", "warning_count"],
       "properties": {
         "approval_queue_count": {"type": "integer", "minimum": 0},
         "decision_count": {"type": "integer", "minimum": 0},
@@ -138,7 +139,12 @@
         "ran_ingestion": {"const": false},
         "ran_current_allocation": {"const": false},
         "ran_calculations": {"const": false},
+        "ran_post_promotion_calculations": {"const": false},
         "merged_addenda": {"const": false},
+        "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
+        "requires_future_apply_stage": {"const": true},
+        "do_not_apply_yet": {"const": true},
         "error_count": {"type": "integer", "minimum": 0},
         "warning_count": {"type": "integer", "minimum": 0}
       },
@@ -170,7 +176,7 @@
     },
     "statusArtifact": {
       "type": "object",
-      "required": ["project", "generated_at_utc", "schema_version", "status", "dry_run_only", "applied_anything", "wrote_core_artifacts", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_to_apply_in_pr34", "requires_future_apply_stage", "approved_decision_count", "dry_run_operation_count", "blocked_operation_count", "skipped_decision_count", "errors", "warnings"],
+      "required": ["project", "generated_at_utc", "schema_version", "status", "dry_run_only", "applied_anything", "wrote_core_artifacts", "ran_ingestion", "ran_current_allocation", "ran_calculations", "ran_post_promotion_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "safe_to_apply_in_pr34", "requires_future_apply_stage", "do_not_apply_yet", "approved_decision_count", "dry_run_operation_count", "blocked_operation_count", "skipped_decision_count", "errors", "warnings"],
       "properties": {
         "project": {"type": "string"},
         "generated_at_utc": {"type": "string"},
@@ -182,9 +188,13 @@
         "ran_ingestion": {"const": false},
         "ran_current_allocation": {"const": false},
         "ran_calculations": {"const": false},
+        "ran_post_promotion_calculations": {"const": false},
         "merged_addenda": {"const": false},
+        "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
         "safe_to_apply_in_pr34": {"const": false},
         "requires_future_apply_stage": {"const": true},
+        "do_not_apply_yet": {"const": true},
         "approved_decision_count": {"type": "integer", "minimum": 0},
         "dry_run_operation_count": {"type": "integer", "minimum": 0},
         "blocked_operation_count": {"type": "integer", "minimum": 0},

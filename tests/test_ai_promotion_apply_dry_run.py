@@ -23,6 +23,11 @@ OUTPUT_NAMES = [
     "ai-approved-addenda-merge-preview.json",
     "ai-promotion-apply-blockers.json",
 ]
+REPORT_NAMES = [
+    "ai-approved-apply-preview-report.json",
+    "ai-approved-apply-preview-report.md",
+    "ai-approved-apply-preview-summary.txt",
+]
 FORBIDDEN_KEYS = {
     "finding_id",
     "issue_id",
@@ -278,6 +283,8 @@ def test_output_shape_for_all_six_artifacts_and_schema_validation(tmp_path: Path
         jsonschema.validate(instance=artifact, schema=schema)
         assert artifact["dry_run_only"] is True
         assert not any(isinstance(v, float) and not math.isfinite(v) for v in all_values(artifact))
+    for name in REPORT_NAMES:
+        assert (tmp_path / "exports" / "TestProject" / "ai_promotion_apply_dry_run" / name).exists()
 
 
 def test_approved_current_and_rating_candidates_create_would_add(tmp_path: Path) -> None:
@@ -289,6 +296,7 @@ def test_approved_current_and_rating_candidates_create_would_add(tmp_path: Path)
     ops = dry(tmp_path)["dry_run_operations"]
     assert [op["dry_run_operation"] for op in ops] == ["would_add", "would_add"]
     assert {op["candidate_kind"] for op in ops} == {"current_model", "rating_model"}
+    assert read_json(tmp_path / "exports" / "TestProject" / "ai_promotion_apply_dry_run" / "ai-approved-promotion-apply-status.json")["safe_for_core_apply"] is False
 
 
 def test_pending_rejected_and_needs_info_decisions_are_skipped(tmp_path: Path) -> None:
@@ -333,6 +341,17 @@ def test_duplicate_safe_flags_and_validation_flags_are_blocked(tmp_path: Path) -
     assert "duplicate decision" in details
     assert "safe_to_apply true" in details
     assert "safe_for_future_apply_stage true" in details
+
+
+def test_queue_safe_to_apply_automatically_true_is_blocked(tmp_path: Path) -> None:
+    decisions = [decision("aq_001", "pc_current")]
+    promo_dir = fixtures(tmp_path, decisions=decisions, validation=validation_for(decisions))
+    queue = read_json(promo_dir / "ai-candidate-approval-queue.json")
+    queue["approval_items"][0]["safe_to_apply_automatically"] = True
+    write_json(promo_dir / "ai-candidate-approval-queue.json", queue)
+    assert run_apply(tmp_path).returncode == 0
+    details = " ".join(row["details"] for row in dry(tmp_path)["blocked_operations"])
+    assert "safe_to_apply_automatically true" in details
 
 
 def test_exact_duplicates_and_conflicts_are_classified(tmp_path: Path) -> None:
@@ -381,6 +400,70 @@ def test_connector_rating_not_expanded_and_regulator_side_not_inferred(tmp_path:
     assert "output" not in json.dumps(op).lower()
 
 
+def test_rating_load_switch_candidates_are_not_branch_current_and_reported(tmp_path: Path) -> None:
+    q2 = candidate(
+        "promo_rating_model_457260c0879c",
+        "rating_model",
+        identity={"target_type": "load_switch", "refdes": "Q2", "field_name": "current_max"},
+        value={"current_max": 8.8, "unit": "A"},
+        evidence=["FDS4435BZ page 1"],
+    )
+    q1 = candidate(
+        "promo_rating_model_c6924c781f53",
+        "rating_model",
+        identity={"target_type": "load_switch", "refdes": "Q1", "field_name": "current_max"},
+        value={"current_max": 0.2, "unit": "A"},
+        evidence=["BSS138W page 1"],
+    )
+    decisions = [
+        decision("approve_1179c269a25b", "promo_rating_model_457260c0879c", note="rating only, not branch_current_a"),
+        decision("approve_9c4366f44e61", "promo_rating_model_c6924c781f53", note="rating only, not branch_current_a"),
+    ]
+    promo_dir = fixtures(tmp_path, [q2, q1], decisions, validation_for(decisions))
+    queue = read_json(promo_dir / "ai-candidate-approval-queue.json")
+    queue["approval_items"][0]["approval_item_id"] = "approve_1179c269a25b"
+    queue["approval_items"][1]["approval_item_id"] = "approve_9c4366f44e61"
+    write_json(promo_dir / "ai-candidate-approval-queue.json", queue)
+    assert run_apply(tmp_path).returncode == 0
+    artifact = dry(tmp_path)
+    assert artifact["summary"]["approved_decision_count"] == 2
+    assert artifact["summary"]["dry_run_operation_count"] == 2
+    assert artifact["summary"]["rating_model_operation_count"] == 2
+    assert all(op["operator_preview"]["not_branch_current_a"] is True for op in artifact["dry_run_operations"])
+    assert "branch_current_a" not in {name for op in artifact["dry_run_operations"] for name in target_field_names_for_test(op["target_identity"], op["candidate_value"])}
+    report = read_json(tmp_path / "exports" / "TestProject" / "ai_promotion_apply_dry_run" / "ai-approved-apply-preview-report.json")
+    md = (tmp_path / "exports" / "TestProject" / "ai_promotion_apply_dry_run" / "ai-approved-apply-preview-report.md").read_text(encoding="utf-8")
+    assert {row["approval_item_id"] for row in report["operations"]} == {"approve_1179c269a25b", "approve_9c4366f44e61"}
+    assert "load_switch Q2 current_max" in md
+    assert "8.8 A" in md
+    assert "FDS4435BZ page 1" in md
+    assert "load_switch Q1 current_max" in md
+    assert "0.2 A" in md
+    assert "BSS138W page 1" in md
+
+
+def target_field_names_for_test(*values: Any) -> set[str]:
+    names: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"field_name", "field", "source_item_id", "target_field"} and child is not None:
+                    names.add(str(child))
+                names.update(target_field_names_for_test(child))
+        elif isinstance(value, list):
+            for child in value:
+                names.update(target_field_names_for_test(child))
+    return names
+
+
+def test_rating_candidate_targeting_branch_current_a_is_blocked(tmp_path: Path) -> None:
+    candidates = [candidate("pc_rating", "rating_model", identity={"target_type": "load_switch", "refdes": "Q1", "field_name": "branch_current_a"}, value={"current_max": 0.2, "unit": "A"})]
+    decisions = [decision("aq_001", "pc_rating")]
+    fixtures(tmp_path, candidates, decisions, validation_for(decisions))
+    assert run_apply(tmp_path).returncode == 0
+    assert "rating candidate must not target branch_current_a" in " ".join(row["details"] for row in dry(tmp_path)["blocked_operations"])
+
+
 def test_addenda_and_passive_support_require_future_merge_validator(tmp_path: Path) -> None:
     candidates = [candidate("pc_role", "role_addendum"), candidate("pc_passive", "passive_support")]
     decisions = [decision("aq_001", "pc_role"), decision("aq_002", "pc_passive")]
@@ -409,7 +492,7 @@ def test_outputs_stay_inside_out_dir_and_forbidden_core_outputs_not_written(tmp_
     fixtures(tmp_path)
     assert run_apply(tmp_path).returncode == 0
     out_dir = tmp_path / "exports" / "TestProject" / "ai_promotion_apply_dry_run"
-    assert {path.name for path in out_dir.iterdir()} == set(OUTPUT_NAMES)
+    assert {path.name for path in out_dir.iterdir()} == set(OUTPUT_NAMES + REPORT_NAMES)
     assert not CORE_OUTPUT_NAMES.intersection({path.name for path in tmp_path.rglob("*.json")})
 
 
@@ -441,6 +524,33 @@ def test_no_forbidden_fields_or_core_write_instructions_are_emitted(tmp_path: Pa
         assert '"writes_core_artifact": true' not in payload
         assert '"safe_to_apply_in_pr34": true' not in payload
         assert '"applied_anything": true' not in payload
+
+
+def test_candidate_writes_core_artifact_true_is_blocked(tmp_path: Path) -> None:
+    unsafe = candidate("pc_current")
+    unsafe["writes_core_artifact"] = True
+    decisions = [decision("aq_001", "pc_current")]
+    fixtures(tmp_path, [unsafe], decisions, validation_for(decisions))
+    assert run_apply(tmp_path).returncode == 0
+    assert "writes_core_artifact=true" in " ".join(row["details"] for row in dry(tmp_path)["blocked_operations"])
+
+
+def test_summary_report_files_are_generated_with_phase11c_safety_flags(tmp_path: Path) -> None:
+    fixtures(tmp_path)
+    assert run_apply(tmp_path).returncode == 0
+    out_dir = tmp_path / "exports" / "TestProject" / "ai_promotion_apply_dry_run"
+    summary = (out_dir / "ai-approved-apply-preview-summary.txt").read_text(encoding="utf-8")
+    for line in [
+        "approved_decision_count=1",
+        "dry_run_operation_count=1",
+        "wrote_core_artifacts=false",
+        "safe_for_core_apply=false",
+        "ready_for_core_apply=false",
+        "requires_future_apply_stage=true",
+        "no allocation/calculation reruns",
+        "do_not_apply_yet=true",
+    ]:
+        assert line in summary
 
 
 def test_operation_ids_and_order_are_deterministic_and_repeat_stable_except_timestamp(tmp_path: Path) -> None:
