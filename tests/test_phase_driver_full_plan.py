@@ -404,3 +404,204 @@ def test_phase_boundary_guards_and_topology_subsystem(tmp_path: Path, monkeypatc
     assert status["wrote_core_artifacts"] is False
     assert status["safe_for_core_apply"] is False
     assert status["ready_for_core_apply"] is False
+
+
+def test_full_plan_stage_record_missing_log_does_not_raise(tmp_path: Path) -> None:
+    """full_plan_stage_record with missing log_path does not raise."""
+    phase_dir = tmp_path / "phase04_run"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    prompt_path = phase_dir / "phase04_prompt.md"
+    prompt_path.write_text("prompt", encoding="utf-8")
+    missing_log = str(tmp_path / "nonexistent" / "phase04-openhands.log")
+
+    record = phase_driver.full_plan_stage_record(
+        run_id_value="test_run",
+        phase=4,
+        mode="execute",
+        status="passed",
+        reason="phase runner and audit passed",
+        phase_dir=phase_dir,
+        prompt_path=prompt_path,
+        prompt_command=["python3", "write_phase_prompt.py"],
+        runner_command=["run_openhands_phase.sh", "4", "TestProject"],
+        validation_commands={"audit": ["python3", "audit_phase.py"]},
+        return_code=0,
+        stdout="ok",
+        stderr="",
+        checkpoint_row_count=1,
+        blocker_id=None,
+        log_path=missing_log,
+    )
+
+    assert record["log_exists"] is False
+    assert record["log_preview"] is None
+    assert record["log_path"] == missing_log
+
+
+def test_full_plan_stage_record_missing_log_recorded_safely(tmp_path: Path) -> None:
+    """Missing log path is recorded safely in stage results."""
+    phase_dir = tmp_path / "phase04_run"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    prompt_path = phase_dir / "phase04_prompt.md"
+    prompt_path.write_text("prompt", encoding="utf-8")
+    missing_log = str(tmp_path / "nonexistent" / "phase04-openhands.log")
+
+    record = phase_driver.full_plan_stage_record(
+        run_id_value="test_run",
+        phase=4,
+        mode="execute",
+        status="passed",
+        reason="phase runner and audit passed",
+        phase_dir=phase_dir,
+        prompt_path=prompt_path,
+        prompt_command=["python3", "write_phase_prompt.py"],
+        runner_command=["run_openhands_phase.sh", "4", "TestProject"],
+        validation_commands={"audit": ["python3", "audit_phase.py"]},
+        return_code=0,
+        stdout="ok",
+        stderr="",
+        checkpoint_row_count=1,
+        blocker_id=None,
+        log_path=missing_log,
+    )
+
+    # Verify JSON serialization works (no crash from missing file)
+    json_str = json.dumps(record, indent=2, sort_keys=True, allow_nan=False)
+    parsed = json.loads(json_str)
+    assert parsed["log_exists"] is False
+    assert parsed["log_preview"] is None
+    assert parsed["log_path"] == missing_log
+
+
+def test_successful_runner_checkpoint_audit_with_missing_log_writes_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Successful runner + checkpoint + audit still writes final full-plan status/stage/blocker artifacts even if the log file is missing."""
+    root = fake_root(tmp_path, monkeypatch)
+
+    def fake_run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        text = " ".join(command)
+        if "write_phase_prompt.py" in text:
+            out = Path(command[command.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("prompt\n", encoding="utf-8")
+        elif "ensure_phase_checkpoint.py" in text:
+            # ensure_phase_checkpoint writes the checkpoint; don't double-write
+            pass
+        return fake_completed(command)
+
+    def fake_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        class _FakeStdout:
+            lines = ["runner output\n"]
+            idx = 0
+
+            def close(self):
+                pass
+
+            def readline(self):
+                if self.idx < len(_FakeStdout.lines):
+                    line = _FakeStdout.lines[self.idx]
+                    self.idx += 1
+                    return line
+                return ""
+
+        class _FakeProc:
+            stdout = None  # type: ignore[attr-defined]
+
+            def wait(self):
+                write_checkpoint(root, "TestProject", 4, passed=True)
+                # Simulate the crash scenario: phase_dir was created but log file
+                # was never written (e.g., runner died before writing logs).
+                phase_output = Path(kwargs.get("cwd", root)) / "exports" / "TestProject"
+                return 0
+
+            def close(self):
+                pass
+
+        _FakeProc.stdout = _FakeStdout()
+        return _FakeProc()
+
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run)
+    monkeypatch.setattr(phase_driver.subprocess, "Popen", fake_popen)
+
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "4", "--end", "4", "--execute", "--runner", "openhands", "--out-dir", str(out_dir)])
+    assert result == 0
+
+    # All artifacts should be written despite missing log file
+    manifest = read_json(out_dir / "full-plan-driver-manifest.json")
+    status = read_json(out_dir / "full-plan-driver-status.json")
+    stage_results = read_json(out_dir / "full-plan-driver-stage-results.json")
+    blockers = read_json(out_dir / "full-plan-driver-blockers.json")
+
+    assert manifest["workflow"] == "full_plan"
+    assert status["workflow"] == "full_plan"
+    assert len(stage_results["stage_results"]) == 1
+    row = stage_results["stage_results"][0]
+    assert row["status"] == "passed"
+    # The log file may or may not exist depending on runner behavior;
+    # the key assertion is that no crash occurs and artifacts are written.
+    assert row["log_path"] is not None
+    assert len(blockers.get("blockers", [])) == 0
+
+
+def test_full_plan_stage_record_with_existing_log(tmp_path: Path) -> None:
+    """full_plan_stage_record with existing log file reads preview correctly."""
+    phase_dir = tmp_path / "phase04_run"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    prompt_path = phase_dir / "phase04_prompt.md"
+    prompt_path.write_text("prompt", encoding="utf-8")
+    log_file = phase_dir / "phase04-openhands.log"
+    log_file.write_text("runner output line 1\nrunner output line 2\n", encoding="utf-8")
+
+    record = phase_driver.full_plan_stage_record(
+        run_id_value="test_run",
+        phase=4,
+        mode="execute",
+        status="passed",
+        reason="phase runner and audit passed",
+        phase_dir=phase_dir,
+        prompt_path=prompt_path,
+        prompt_command=["python3", "write_phase_prompt.py"],
+        runner_command=["run_openhands_phase.sh", "4", "TestProject"],
+        validation_commands={"audit": ["python3", "audit_phase.py"]},
+        return_code=0,
+        stdout="ok",
+        stderr="",
+        checkpoint_row_count=1,
+        blocker_id=None,
+        log_path=str(log_file),
+    )
+
+    assert record["log_exists"] is True
+    assert record["log_preview"] == "runner output line 1\nrunner output line 2\n"
+    assert record["log_path"] == str(log_file)
+
+
+def test_full_plan_stage_record_no_log_path(tmp_path: Path) -> None:
+    """full_plan_stage_record with no log_path records safely."""
+    phase_dir = tmp_path / "phase04_run"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    prompt_path = phase_dir / "phase04_prompt.md"
+    prompt_path.write_text("prompt", encoding="utf-8")
+
+    record = phase_driver.full_plan_stage_record(
+        run_id_value="test_run",
+        phase=4,
+        mode="dry_run",
+        status="planned",
+        reason="dry run planned",
+        phase_dir=phase_dir,
+        prompt_path=prompt_path,
+        prompt_command=["python3", "write_phase_prompt.py"],
+        runner_command=[],
+        validation_commands={"audit": ["python3", "audit_phase.py"]},
+        return_code=None,
+        stdout="",
+        stderr="",
+        checkpoint_row_count=0,
+        blocker_id=None,
+        log_path=None,
+    )
+
+    assert record["log_exists"] is False
+    assert record["log_preview"] is None
+    assert record["log_path"] is None

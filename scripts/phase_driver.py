@@ -813,6 +813,7 @@ def full_plan_stage_record(
     blocker_id: str | None = None,
     log_path: str | None = None,
 ) -> dict[str, Any]:
+    _log_exists = Path(log_path).exists() if log_path else False
     return {
         "workflow": FULL_PLAN_WORKFLOW,
         "run_id": run_id_value,
@@ -824,7 +825,9 @@ def full_plan_stage_record(
         "return_code": return_code,
         "stdout_preview": preview(stdout),
         "stderr_preview": preview(stderr),
-        "log_preview": preview(Path(log_path).read_text(encoding="utf-8")) if log_path else None,
+        "log_path": log_path,
+        "log_exists": _log_exists,
+        "log_preview": preview(Path(log_path).read_text(encoding="utf-8")) if (_log_exists and log_path) else None,
         "phase_output_dir": str(phase_dir),
         "prompt_path": str(prompt_path),
         "prompt_command": prompt_command,
