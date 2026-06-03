@@ -4,16 +4,20 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ensure_phase_checkpoint import PHASE_ARTIFACTS as FULL_PLAN_PHASE_ARTIFACTS
+from ensure_phase_checkpoint import PHASES as FULL_PLAN_PHASES
 from topology_ai_phase_registry import PhaseSpec, TopologyPaths, _missing_manifest, selected_phases
 
 
 WORKFLOW = "topology_ai"
+FULL_PLAN_WORKFLOW = "full_plan"
 SAFETY_FLAGS = {
     "workflow_run_only": True,
     "wrote_core_artifacts": False,
@@ -24,6 +28,20 @@ SAFETY_FLAGS = {
     "safe_for_core_apply": False,
     "ready_for_core_apply": False,
 }
+FULL_PLAN_SAFETY_FLAGS = {
+    "workflow_run_only": True,
+    "wrote_core_artifacts": False,
+    "safe_for_core_apply": False,
+    "ready_for_core_apply": False,
+    "topology_ai_is_subsystem": True,
+    "ran_topology_ai_subsystem": False,
+    "ran_allocation": False,
+    "ran_copper": False,
+    "ran_voltage_drop": False,
+    "ran_thermal": False,
+    "ran_margin": False,
+    "ran_calculations": False,
+}
 REQUIRED_OUTPUTS = (
     "phase-driver-manifest.json",
     "phase-driver-status.json",
@@ -31,6 +49,13 @@ REQUIRED_OUTPUTS = (
     "phase-driver-artifact-index.json",
     "phase-driver-blockers.json",
     "phase-driver-inspection-commands.md",
+)
+FULL_PLAN_REQUIRED_OUTPUTS = (
+    "full-plan-driver-manifest.json",
+    "full-plan-driver-status.json",
+    "full-plan-driver-stage-results.json",
+    "full-plan-driver-blockers.json",
+    "full-plan-driver-inspection-commands.md",
 )
 ISOLATED_OUTPUT_PRS = set(range(26, 38))
 
@@ -63,6 +88,25 @@ def rel(path: Path, root: Path) -> str:
         return str(path.resolve().relative_to(root.resolve()))
     except ValueError:
         return str(path)
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug or "phase"
+
+
+def command_text(command: list[str]) -> str:
+    return " ".join(str(part) for part in command)
+
+
+def full_phase_number(value: str | int) -> int:
+    try:
+        phase = int(str(value).removeprefix("phase"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"full_plan phase must be numeric 1-22: {value}") from exc
+    if phase not in FULL_PLAN_PHASES:
+        raise argparse.ArgumentTypeError(f"full_plan phase must be in 1-22: {value}")
+    return phase
 
 
 def env_value(name: str) -> str | None:
@@ -585,6 +629,611 @@ def write_inspection_commands(path: Path, project: str, out_dir: Path, results: 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def full_plan_doc_status(root: Path) -> dict[str, Any]:
+    docs = {
+        "PLAN.md": root / "PLAN.md",
+        "OPENHANDS_REVIEW.md": root / "OPENHANDS_REVIEW.md",
+    }
+    return {
+        name: {
+            "path": str(path),
+            "exists": path.is_file(),
+            "byte_count": path.stat().st_size if path.is_file() else 0,
+        }
+        for name, path in docs.items()
+    }
+
+
+def selected_full_plan_phases(start: int, end: int) -> list[int]:
+    if end < start:
+        raise ValueError("full_plan --end must be greater than or equal to --start")
+    return list(range(start, end + 1))
+
+
+def checkpoint_file(root: Path, project: str) -> Path:
+    return root / "exports" / f"{project}-phase-checkpoints.jsonl"
+
+
+def load_checkpoint_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            rows.append({"phase_number": None, "phase_passed": False, "_invalid_json_line": line_number})
+            continue
+        if isinstance(value, dict):
+            rows.append(value)
+    return rows
+
+
+def checkpoint_rows_for_phase(rows: list[dict[str, Any]], phase: int) -> list[dict[str, Any]]:
+    return [row for row in rows if row.get("phase_number") == phase]
+
+
+def exactly_one_passed_checkpoint(rows: list[dict[str, Any]], phase: int) -> bool:
+    phase_rows = checkpoint_rows_for_phase(rows, phase)
+    return len(phase_rows) == 1 and phase_rows[0].get("phase_passed") is True
+
+
+def full_plan_phase_dir(out_dir: Path, phase: int, stamp: str) -> Path:
+    return out_dir / f"phase{phase:02d}_{slugify(FULL_PLAN_PHASES[phase])}_{stamp}"
+
+
+def full_plan_prompt_command(root: Path, project: str, phase: int, prompt_path: Path) -> list[str]:
+    return [
+        sys.executable,
+        str(root / "scripts" / "write_phase_prompt.py"),
+        "--project",
+        project,
+        "--phase",
+        str(phase),
+        "--out",
+        str(prompt_path),
+    ]
+
+
+def full_plan_runner_command(root: Path, project: str, phase: int, runner: str) -> list[str]:
+    if runner == "openhands":
+        return [str(root / "scripts" / "run_openhands_phase.sh"), str(phase), project]
+    if runner == "codex":
+        return ["codex", "exec", "--project", project, "--phase", str(phase)]
+    return []
+
+
+def full_plan_validation_commands(root: Path, project: str, phase: int) -> dict[str, list[str]]:
+    exports_arg = str(root / "exports")
+    return {
+        "checkpoint_inspection": [
+            sys.executable,
+            str(root / "scripts" / "ensure_phase_checkpoint.py"),
+            "--project",
+            project,
+            "--phase",
+            str(phase),
+            "--exports",
+            exports_arg,
+        ],
+        "audit": [
+            sys.executable,
+            str(root / "scripts" / "audit_phase.py"),
+            "--project",
+            project,
+            "--phase",
+            str(phase),
+            "--exports",
+            exports_arg,
+        ],
+    }
+
+
+def full_plan_topology_ai_subsystem_command(root: Path, project: str, phase: int, out_dir: Path) -> list[str]:
+    if phase != 12:
+        return []
+    return [
+        sys.executable,
+        str(root / "scripts" / "phase_driver.py"),
+        project,
+        "--workflow",
+        WORKFLOW,
+        "--out-dir",
+        str(out_dir / "topology_ai_subsystem"),
+        "--dry-run",
+    ]
+
+
+def full_plan_stage_plan(root: Path, project: str, out_dir: Path, phases: list[int], stamp: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for phase in phases:
+        phase_dir = full_plan_phase_dir(out_dir, phase, stamp)
+        prompt_path = phase_dir / f"phase{phase:02d}_prompt.md"
+        validation = full_plan_validation_commands(root, project, phase)
+        rows.append(
+            {
+                "workflow": FULL_PLAN_WORKFLOW,
+                "phase_number": phase,
+                "phase_name": FULL_PLAN_PHASES[phase],
+                "phase_output_dir": str(phase_dir),
+                "prompt_path": str(prompt_path),
+                "prompt_command": full_plan_prompt_command(root, project, phase, prompt_path),
+                "runner_command": [],
+                "validation_commands": validation,
+                "required_artifacts": [
+                    artifact.format(project=project) for artifact in FULL_PLAN_PHASE_ARTIFACTS.get(phase, [])
+                ],
+                "may_write_findings": phase >= 19,
+                "may_generate_report": phase >= 21,
+                "may_write_final_summary": phase == 22,
+                "topology_ai_subsystem_command": full_plan_topology_ai_subsystem_command(root, project, phase, out_dir),
+            }
+        )
+    return rows
+
+
+def full_plan_blocker(blocker_id: str, phase: int | None, reason: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "blocker_id": blocker_id,
+        "workflow": FULL_PLAN_WORKFLOW,
+        "phase_number": phase,
+        "phase_name": FULL_PLAN_PHASES.get(phase) if phase else None,
+        "reason": reason,
+        "details": details or {},
+    }
+
+
+def full_plan_stage_record(
+    *,
+    phase: int,
+    mode: str,
+    status: str,
+    reason: str,
+    phase_dir: Path,
+    prompt_path: Path,
+    prompt_command: list[str],
+    runner_command: list[str],
+    validation_commands: dict[str, list[str]],
+    return_code: int | None = None,
+    stdout: str = "",
+    stderr: str = "",
+    checkpoint_row_count: int = 0,
+    blocker_id: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "workflow": FULL_PLAN_WORKFLOW,
+        "phase_number": phase,
+        "phase_name": FULL_PLAN_PHASES[phase],
+        "mode": mode,
+        "status": status,
+        "reason": reason,
+        "return_code": return_code,
+        "stdout_preview": preview(stdout),
+        "stderr_preview": preview(stderr),
+        "phase_output_dir": str(phase_dir),
+        "prompt_path": str(prompt_path),
+        "prompt_command": prompt_command,
+        "runner_command": runner_command,
+        "validation_commands": validation_commands,
+        "checkpoint_row_count": checkpoint_row_count,
+        "blocker_id": blocker_id,
+        "may_write_findings": phase >= 19,
+        "may_generate_report": phase >= 21,
+        "may_write_final_summary": phase == 22,
+        "topology_ai_subsystem": phase == 12,
+    }
+
+
+def full_plan_mode(args: argparse.Namespace) -> str:
+    if args.prompt_only:
+        return "prompt_only"
+    if args.execute:
+        return "execute"
+    return "dry_run"
+
+
+def out_dir_for_full_plan(args: argparse.Namespace, root: Path) -> Path:
+    if args.out_dir:
+        out_dir = Path(args.out_dir)
+        return out_dir if out_dir.is_absolute() else root / out_dir
+    return root / "exports" / args.project / run_id()
+
+
+def write_full_plan_inspection_commands(path: Path, project: str, out_dir: Path, results: list[dict[str, Any]]) -> None:
+    lines = [
+        "# Full Plan Driver Inspection Commands",
+        "",
+        f"Project: `{project}`",
+        f"Workflow run directory: `{out_dir}`",
+        "",
+        "```bash",
+        f"python3 -m json.tool {out_dir / 'full-plan-driver-manifest.json'}",
+        f"python3 -m json.tool {out_dir / 'full-plan-driver-status.json'}",
+        f"python3 -m json.tool {out_dir / 'full-plan-driver-stage-results.json'}",
+        f"python3 -m json.tool {out_dir / 'full-plan-driver-blockers.json'}",
+        "```",
+        "",
+        "## Phase Commands",
+        "",
+    ]
+    for row in results:
+        lines.extend([f"### Phase {row['phase_number']}: {row['phase_name']}", ""])
+        lines.extend(["Prompt:", "```bash", command_text(row["prompt_command"]), "```", ""])
+        if row["runner_command"]:
+            lines.extend(["Runner:", "```bash", command_text(row["runner_command"]), "```", ""])
+        lines.extend(["Audit:", "```bash", command_text(row["validation_commands"]["audit"]), "```", ""])
+        if row.get("topology_ai_subsystem"):
+            lines.extend(["Topology AI subsystem remains separate from the full-plan driver.", ""])
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_full_plan_artifacts(
+    args: argparse.Namespace,
+    out_dir: Path,
+    phases: list[int],
+    stage_plan: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+    blockers: list[dict[str, Any]],
+    mode: str,
+) -> dict[str, Path]:
+    now = utc_now()
+    status_counts = {
+        name: sum(1 for row in results if row["status"] == name)
+        for name in ["planned", "prompt_written", "passed", "failed", "blocked", "skipped_passed_checkpoint"]
+    }
+    overall_status = "failed" if status_counts["failed"] else ("blocked" if status_counts["blocked"] or blockers else "passed")
+    flags = {**FULL_PLAN_SAFETY_FLAGS}
+    if args.enable_topology_ai_subsystem and any(row.get("topology_ai_subsystem") and row["status"] == "passed" for row in results):
+        flags["ran_topology_ai_subsystem"] = True
+    manifest = {
+        "artifact_type": "full_plan_driver_manifest",
+        "schema_version": "1.0",
+        "generated_at_utc": now,
+        "project": args.project,
+        "workflow": FULL_PLAN_WORKFLOW,
+        "workflow_run_dir": str(out_dir),
+        "phase_range": {"start": phases[0] if phases else None, "end": phases[-1] if phases else None},
+        "mode": mode,
+        "runner": args.runner,
+        "resume": args.resume,
+        "allow_existing_outputs": args.allow_existing_outputs,
+        "docs": full_plan_doc_status(repo_root()),
+        "stage_plan": stage_plan,
+        **flags,
+    }
+    status = {
+        "artifact_type": "full_plan_driver_status",
+        "schema_version": "1.0",
+        "generated_at_utc": now,
+        "project": args.project,
+        "workflow": FULL_PLAN_WORKFLOW,
+        "workflow_run_dir": str(out_dir),
+        "overall_status": overall_status,
+        "mode": mode,
+        "runner": args.runner,
+        "phase_count": len(phases),
+        "stage_counts": status_counts,
+        "blocker_count": len(blockers),
+        "findings_forbidden_before_phase_19": True,
+        "report_forbidden_before_phase_21": True,
+        "final_summary_forbidden_before_phase_22": True,
+        **flags,
+    }
+    stage_results = {
+        "artifact_type": "full_plan_driver_stage_results",
+        "schema_version": "1.0",
+        "generated_at_utc": now,
+        "project": args.project,
+        "workflow": FULL_PLAN_WORKFLOW,
+        "stage_results": results,
+        **flags,
+    }
+    blocker_artifact = {
+        "artifact_type": "full_plan_driver_blockers",
+        "schema_version": "1.0",
+        "generated_at_utc": now,
+        "project": args.project,
+        "workflow": FULL_PLAN_WORKFLOW,
+        "blockers": blockers,
+        **flags,
+    }
+    artifacts = {
+        "full-plan-driver-manifest.json": out_dir / "full-plan-driver-manifest.json",
+        "full-plan-driver-status.json": out_dir / "full-plan-driver-status.json",
+        "full-plan-driver-stage-results.json": out_dir / "full-plan-driver-stage-results.json",
+        "full-plan-driver-blockers.json": out_dir / "full-plan-driver-blockers.json",
+        "full-plan-driver-inspection-commands.md": out_dir / "full-plan-driver-inspection-commands.md",
+    }
+    write_json(artifacts["full-plan-driver-manifest.json"], manifest)
+    write_json(artifacts["full-plan-driver-status.json"], status)
+    write_json(artifacts["full-plan-driver-stage-results.json"], stage_results)
+    write_json(artifacts["full-plan-driver-blockers.json"], blocker_artifact)
+    write_full_plan_inspection_commands(artifacts["full-plan-driver-inspection-commands.md"], args.project, out_dir, results)
+    return artifacts
+
+
+def execute_full_plan(args: argparse.Namespace) -> int:
+    root = repo_root()
+    docs = full_plan_doc_status(root)
+    missing_docs = [name for name, info in docs.items() if not info["exists"]]
+    out_dir = out_dir_for_full_plan(args, root)
+    mode = full_plan_mode(args)
+    start = full_phase_number(args.start)
+    end = full_phase_number(args.end)
+    phases = selected_full_plan_phases(start, end)
+    stamp = run_id()
+    stage_plan = full_plan_stage_plan(root, args.project, out_dir, phases, stamp)
+    blockers: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+
+    if missing_docs:
+        blockers.append(full_plan_blocker("missing_full_plan_docs", None, "required full-plan docs are missing", {"missing": missing_docs}))
+
+    if out_dir.exists() and any(out_dir.iterdir()) and not args.allow_existing_outputs:
+        blockers.append(full_plan_blocker("existing_full_plan_output_dir", None, "output directory already exists and is not empty", {"out_dir": str(out_dir)}))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if blockers:
+        write_full_plan_artifacts(args, out_dir, phases, stage_plan, results, blockers, mode)
+        print(f"ERROR: full_plan driver blocked before phase execution: {blockers[0]['reason']}", file=sys.stderr)
+        return 2
+
+    checkpoint_path = checkpoint_file(root, args.project)
+    checkpoint_rows = load_checkpoint_rows(checkpoint_path)
+
+    for planned in stage_plan:
+        phase = int(planned["phase_number"])
+        phase_dir = Path(planned["phase_output_dir"])
+        prompt_path = Path(planned["prompt_path"])
+        prompt_command = planned["prompt_command"]
+        validation_commands = planned["validation_commands"]
+        runner_command = full_plan_runner_command(root, args.project, phase, args.runner)
+        if args.enable_topology_ai_subsystem and phase == 12:
+            runner_command = planned["topology_ai_subsystem_command"] or runner_command
+        phase_rows = checkpoint_rows_for_phase(checkpoint_rows, phase)
+
+        if args.resume and exactly_one_passed_checkpoint(checkpoint_rows, phase):
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="skipped_passed_checkpoint",
+                    reason="resume: exactly one passed checkpoint row already exists",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    checkpoint_row_count=len(phase_rows),
+                )
+            )
+            continue
+
+        if phase_rows and not args.allow_existing_outputs and mode != "dry_run":
+            blocker_id = f"phase{phase:02d}_checkpoint_exists_without_resume"
+            blockers.append(
+                full_plan_blocker(
+                    blocker_id,
+                    phase,
+                    "checkpoint rows already exist; use --resume to skip passed phases or --allow-existing-outputs to continue",
+                    {"checkpoint_row_count": len(phase_rows), "checkpoint_path": str(checkpoint_path)},
+                )
+            )
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="blocked",
+                    reason="checkpoint exists without --resume",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    checkpoint_row_count=len(phase_rows),
+                    blocker_id=blocker_id,
+                )
+            )
+            break
+
+        if mode == "dry_run":
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="planned",
+                    reason="dry-run: prompt, runner, and validation commands were not executed",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    checkpoint_row_count=len(phase_rows),
+                )
+            )
+            continue
+
+        phase_dir.mkdir(parents=True, exist_ok=True)
+        completed_prompt = subprocess.run(prompt_command, cwd=root, text=True, capture_output=True)
+        if completed_prompt.returncode != 0:
+            blocker_id = f"phase{phase:02d}_prompt_failed"
+            blockers.append(full_plan_blocker(blocker_id, phase, "phase prompt generation failed", {"return_code": completed_prompt.returncode}))
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="failed",
+                    reason="phase prompt generation failed",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    return_code=completed_prompt.returncode,
+                    stdout=completed_prompt.stdout,
+                    stderr=completed_prompt.stderr,
+                    checkpoint_row_count=len(phase_rows),
+                    blocker_id=blocker_id,
+                )
+            )
+            break
+
+        if mode == "prompt_only":
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="prompt_written",
+                    reason="prompt-only: runner and validation commands were not executed",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    return_code=completed_prompt.returncode,
+                    stdout=completed_prompt.stdout,
+                    stderr=completed_prompt.stderr,
+                    checkpoint_row_count=len(phase_rows),
+                )
+            )
+            continue
+
+        subsystem_runner_selected = args.enable_topology_ai_subsystem and phase == 12 and bool(planned["topology_ai_subsystem_command"])
+        if args.runner == "none" and not subsystem_runner_selected:
+            blocker_id = f"phase{phase:02d}_runner_none"
+            blockers.append(full_plan_blocker(blocker_id, phase, "--execute requires --runner openhands or an enabled subsystem runner"))
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="blocked",
+                    reason="execute requested with runner=none",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    checkpoint_row_count=len(phase_rows),
+                    blocker_id=blocker_id,
+                )
+            )
+            break
+        if args.runner == "codex" and not subsystem_runner_selected:
+            blocker_id = f"phase{phase:02d}_runner_codex_unimplemented"
+            blockers.append(full_plan_blocker(blocker_id, phase, "codex runner integration is not implemented yet"))
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="blocked",
+                    reason="codex runner integration is not implemented yet",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    checkpoint_row_count=len(phase_rows),
+                    blocker_id=blocker_id,
+                )
+            )
+            break
+
+        completed_runner = subprocess.run(runner_command, cwd=root, text=True, capture_output=True)
+        checkpoint_rows = load_checkpoint_rows(checkpoint_path)
+        phase_rows = checkpoint_rows_for_phase(checkpoint_rows, phase)
+        if completed_runner.returncode != 0:
+            blocker_id = f"phase{phase:02d}_runner_failed"
+            blockers.append(full_plan_blocker(blocker_id, phase, "phase runner failed", {"return_code": completed_runner.returncode}))
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="failed",
+                    reason="phase runner failed",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    return_code=completed_runner.returncode,
+                    stdout=completed_runner.stdout,
+                    stderr=completed_runner.stderr,
+                    checkpoint_row_count=len(phase_rows),
+                    blocker_id=blocker_id,
+                )
+            )
+            break
+
+        if not exactly_one_passed_checkpoint(checkpoint_rows, phase):
+            blocker_id = f"phase{phase:02d}_checkpoint_not_passed"
+            blockers.append(
+                full_plan_blocker(
+                    blocker_id,
+                    phase,
+                    "phase must produce exactly one checkpoint row with phase_passed=true",
+                    {"checkpoint_row_count": len(phase_rows), "checkpoint_path": str(checkpoint_path)},
+                )
+            )
+            results.append(
+                full_plan_stage_record(
+                    phase=phase,
+                    mode=mode,
+                    status="blocked",
+                    reason="missing, duplicate, or failed phase checkpoint",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    return_code=completed_runner.returncode,
+                    stdout=completed_runner.stdout,
+                    stderr=completed_runner.stderr,
+                    checkpoint_row_count=len(phase_rows),
+                    blocker_id=blocker_id,
+                )
+            )
+            break
+
+        completed_audit = subprocess.run(validation_commands["audit"], cwd=root, text=True, capture_output=True)
+        status = "passed" if completed_audit.returncode == 0 else "failed"
+        blocker_id = None
+        reason = "phase runner and audit passed"
+        if completed_audit.returncode != 0:
+            blocker_id = f"phase{phase:02d}_audit_failed"
+            reason = "phase audit failed"
+            blockers.append(full_plan_blocker(blocker_id, phase, reason, {"return_code": completed_audit.returncode}))
+        results.append(
+            full_plan_stage_record(
+                phase=phase,
+                mode=mode,
+                status=status,
+                reason=reason,
+                phase_dir=phase_dir,
+                prompt_path=prompt_path,
+                prompt_command=prompt_command,
+                runner_command=runner_command,
+                validation_commands=validation_commands,
+                return_code=completed_audit.returncode,
+                stdout=completed_audit.stdout,
+                stderr=completed_audit.stderr,
+                checkpoint_row_count=len(phase_rows),
+                blocker_id=blocker_id,
+            )
+        )
+        if completed_audit.returncode != 0:
+            break
+
+    artifacts = write_full_plan_artifacts(args, out_dir, phases, stage_plan, results, blockers, mode)
+    print(f"phase driver full_plan: project={args.project} phases={start}-{end} mode={mode} run_dir={out_dir}")
+    for name in FULL_PLAN_REQUIRED_OUTPUTS:
+        print(f"wrote {artifacts[name]}")
+    return 0 if not blockers else 1
+
+
 def execute_evidence_review_dry_run(args: argparse.Namespace) -> int:
     root = repo_root()
     start = int(args.legacy_start)
@@ -615,7 +1264,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("project")
     parser.add_argument("legacy_start", nargs="?")
     parser.add_argument("legacy_end", nargs="?")
-    parser.add_argument("--workflow", choices=["evidence_review", WORKFLOW], default="evidence_review")
+    parser.add_argument("--workflow", choices=["evidence_review", WORKFLOW, FULL_PLAN_WORKFLOW], default="evidence_review")
     parser.add_argument("--start", default="pr16")
     parser.add_argument("--end", default="pr37")
     parser.add_argument("--out-dir")
@@ -627,7 +1276,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--continue-with-existing-ai-artifacts", action="store_true")
     parser.add_argument("--stop-at-missing-ai", action="store_true")
     parser.add_argument("--strict", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument("--prompt-only", action="store_true")
+    mode.add_argument("--execute", action="store_true")
+    parser.add_argument("--runner", choices=["openhands", "codex", "none"], default="none")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--enable-topology-ai-subsystem", action="store_true")
     # Optional source artifact overrides for PR26
     parser.add_argument("--bom")
     parser.add_argument("--schematic-export")
@@ -641,6 +1296,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.workflow == FULL_PLAN_WORKFLOW:
+        if args.start == "pr16":
+            args.start = args.legacy_start or "1"
+        if args.end == "pr37":
+            args.end = args.legacy_end or "22"
+        if not (args.dry_run or args.prompt_only or args.execute):
+            args.dry_run = True
+        return execute_full_plan(args)
     if args.workflow == WORKFLOW:
         return execute_topology_ai(args)
     if args.dry_run:
