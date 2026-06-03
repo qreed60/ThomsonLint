@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -190,6 +192,38 @@ def test_engineering_profile_adds_assessment_only_to_target_phases(tmp_path: Pat
     assert "Engineering Assessment Mode:" in phase14
     assert "Assessment profile: engineering" in phase14
     assert "Engineering Assessment Mode:" not in phase20
+
+
+def test_engineering_profile_phase13_prompt_names_vision_annotation_artifact(tmp_path: Path) -> None:
+    prompt = write_phase_prompt(tmp_path, 13, "engineering")
+
+    assert "exports/example-vision-engineering-annotations.json" in prompt
+    assert "Engineering annotations are not final findings" in prompt
+    assert "Reject or record generic visual claims" in prompt
+    assert "Do not make exact geometry claims" in prompt
+
+
+def test_phase13_strict_profile_required_artifacts_exclude_vision_annotations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure = load_module(ROOT / "scripts" / "ensure_phase_checkpoint.py")
+    monkeypatch.delenv("THOMSONLINT_ASSESSMENT_PROFILE", raising=False)
+
+    artifacts = ensure.phase_artifact_templates(13)
+
+    assert "exports/{project}-image-evidence-review.json" in artifacts
+    assert "exports/{project}-vision-engineering-annotations.json" not in artifacts
+
+
+def test_phase13_engineering_profile_required_artifacts_include_vision_annotations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure = load_module(ROOT / "scripts" / "ensure_phase_checkpoint.py")
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "engineering")
+
+    artifacts = ensure.phase_artifact_templates(13)
+
+    assert "exports/{project}-vision-engineering-annotations.json" in artifacts
 
 
 def test_phase11_validation_gate_allows_recorded_dfm_violations(tmp_path: Path) -> None:

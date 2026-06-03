@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,6 +102,23 @@ PHASE_ARTIFACTS = {
         "exports/{project}-phase-checkpoints.jsonl",
     ],
 }
+
+ASSESSMENT_ENABLED_PROFILES = {"balanced", "engineering"}
+
+
+def assessment_profile_from_env() -> str:
+    return os.environ.get("THOMSONLINT_ASSESSMENT_PROFILE", "strict").strip().lower() or "strict"
+
+
+def assessment_enabled() -> bool:
+    return assessment_profile_from_env() in ASSESSMENT_ENABLED_PROFILES
+
+
+def phase_artifact_templates(phase: int) -> list[str]:
+    templates = list(PHASE_ARTIFACTS.get(phase, []))
+    if phase == 13 and assessment_enabled():
+        templates.append("exports/{project}-vision-engineering-annotations.json")
+    return templates
 
 CHECKPOINT_KEYS = [
     "phase_number",
@@ -468,6 +486,16 @@ def artifact_passes(path: Path, phase: int) -> tuple[bool, list[str]]:
         # Phase 7: image-evidence-inventory.json (no separate validation artifact) uses overall_pass
         if phase == 7 and path.name.endswith("-image-evidence-inventory.json") and data.get("overall_pass") is not True:
             blockers.append(f"{path} overall_pass is not true")
+        if phase == 13 and path.name.endswith("-vision-engineering-annotations.json"):
+            annotations = data.get("annotations")
+            if data.get("overall_pass") is not True:
+                blockers.append(f"{path} overall_pass is not true")
+            if not isinstance(annotations, list):
+                blockers.append(f"{path} annotations is not a list")
+            elif data.get("annotation_count") != len(annotations):
+                blockers.append(f"{path} annotation_count does not match annotations length")
+            if data.get("assessment_profile") not in {"balanced", "engineering"}:
+                blockers.append(f"{path} assessment_profile is not balanced or engineering")
 
     return not blockers, blockers
 
@@ -493,7 +521,7 @@ def main() -> int:
         print(f"checkpoint already exists for phase {args.phase}; leaving unchanged")
         return 0
 
-    artifact_templates = PHASE_ARTIFACTS.get(args.phase, [])
+    artifact_templates = phase_artifact_templates(args.phase)
     artifacts = render(artifact_templates, args.project)
 
     blockers: list[str] = []

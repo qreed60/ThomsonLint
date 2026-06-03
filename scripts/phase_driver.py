@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ensure_phase_checkpoint import PHASE_ARTIFACTS as FULL_PLAN_PHASE_ARTIFACTS
 from ensure_phase_checkpoint import PHASES as FULL_PLAN_PHASES
+from ensure_phase_checkpoint import phase_artifact_templates as full_plan_phase_artifact_templates
 from topology_ai_phase_registry import PhaseSpec, TopologyPaths, _missing_manifest, selected_phases
 
 
@@ -773,7 +773,7 @@ def full_plan_stage_plan(root: Path, project: str, run_id_value: str | None, out
                 "runner_command": [],
                 "validation_commands": validation,
                 "required_artifacts": [
-                    artifact.format(project=project) for artifact in FULL_PLAN_PHASE_ARTIFACTS.get(phase, [])
+                    artifact.format(project=project) for artifact in full_plan_phase_artifact_templates(phase)
                 ],
                 "may_write_findings": phase >= 19,
                 "may_generate_report": phase >= 21,

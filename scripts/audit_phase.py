@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,13 @@ PHASES = {
     21: "Generate Report",
     22: "Final Summary",
 }
+
+ASSESSMENT_ENABLED_PROFILES = {"balanced", "engineering"}
+
+
+def assessment_enabled() -> bool:
+    profile = os.environ.get("THOMSONLINT_ASSESSMENT_PROFILE", "strict").strip().lower() or "strict"
+    return profile in ASSESSMENT_ENABLED_PROFILES
 
 CHECKPOINT_KEYS = [
     "phase_number",
@@ -516,6 +524,33 @@ def audit_phase(exports: Path, project: str, phase: int) -> None:
         require_file(exports / f"{project}-image-evidence-inventory.json")
         require_file(exports / f"{project}-image-evidence-review.json")
         require_true(exports / f"{project}-image-evidence-review-validation.json", "overall_pass")
+        if assessment_enabled():
+            annotations_path = exports / f"{project}-vision-engineering-annotations.json"
+            annotations = load_json(annotations_path)
+            if not isinstance(annotations, dict):
+                fail(f"{annotations_path} must be a JSON object, not a list")
+            require_true(annotations_path, "overall_pass")
+            rows = annotations.get("annotations")
+            if not isinstance(rows, list):
+                fail(f"{annotations_path} annotations must be a list")
+            if annotations.get("annotation_count") != len(rows):
+                fail(f"{annotations_path} annotation_count does not match annotations length")
+            if annotations.get("assessment_profile") not in {"balanced", "engineering"}:
+                fail(f"{annotations_path} assessment_profile must be balanced or engineering")
+            for idx, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    fail(f"{annotations_path} annotations[{idx}] must be an object")
+                for field in [
+                    "engineering_concern_candidates",
+                    "blocked_verification_candidates",
+                    "datasheet_check_needed",
+                    "calculation_needed",
+                    "human_review_questions",
+                    "not_verifiable_from_image",
+                    "generic_claims_rejected",
+                ]:
+                    if not isinstance(row.get(field), list):
+                        fail(f"{annotations_path} annotations[{idx}].{field} must be a list")
 
     elif phase == 9:
         require_file(exports / f"{project}-board-evidence-inventory.json")

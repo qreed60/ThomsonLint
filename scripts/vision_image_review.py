@@ -14,6 +14,7 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -25,11 +26,42 @@ STRICT_JSON_ONLY_PROMPT = (
     "Return only minified valid JSON. No markdown. No prose. No comments. "
     "No trailing commas. Escape quotes inside strings. Output exactly one JSON object."
 )
+ASSESSMENT_PROFILES = {"strict", "balanced", "engineering"}
+ASSESSMENT_ENABLED_PROFILES = {"balanced", "engineering"}
+GENERIC_VISION_CLAIMS = {
+    "routing verified",
+    "connectivity verified",
+    "power distribution verified",
+    "layer inspected",
+    "visual inspection passed",
+    "component placement verified",
+}
+FINAL_STYLE_CLAIM_PATTERNS = [
+    re.compile(r"\bfails?\b", re.IGNORECASE),
+    re.compile(r"\bincorrectly designed\b", re.IGNORECASE),
+    re.compile(r"\bviolates?\b", re.IGNORECASE),
+    re.compile(r"\bviolation found\b", re.IGNORECASE),
+]
 
 
 def env(name: str, default: str | None = None) -> str | None:
     value = os.environ.get(name)
     return value if value not in (None, "") else default
+
+
+def assessment_profile_from_env() -> str:
+    value = env("THOMSONLINT_ASSESSMENT_PROFILE", "strict")
+    profile = (value or "strict").strip().lower()
+    if profile not in ASSESSMENT_PROFILES:
+        raise SystemExit(
+            "Invalid THOMSONLINT_ASSESSMENT_PROFILE: "
+            f"{profile!r}. Expected one of: balanced, engineering, strict."
+        )
+    return profile
+
+
+def assessment_enabled(profile: str) -> bool:
+    return profile in ASSESSMENT_ENABLED_PROFILES
 
 
 def data_uri(path: Path) -> str:
@@ -167,12 +199,68 @@ def extract_json(text: str) -> dict[str, Any]:
     raise ValueError(f"model did not return valid JSON: {text[:500]}")
 
 
-def prompt_for(path: Path, kind: str) -> str:
+def engineering_annotation_prompt(path: Path, kind: str) -> str:
+    common = f"""
+
+Engineering annotation requirements:
+- Return valid JSON only.
+- Extract engineering observations, not final findings.
+- Label hypotheses, engineering concerns, blocked verifications, datasheet checks,
+  calculations needed, and human-review questions separately from verified facts.
+- State what cannot be verified from image alone.
+- Do not invent numeric values.
+- Do not make exact geometry claims from screenshots/Gerber images unless tied to board-coordinate evidence.
+- Do not report "verified" unless a concrete page-specific observation is included.
+- Reject generic visual claims such as "routing verified", "connectivity verified",
+  "power distribution verified", "layer inspected", "visual inspection passed",
+  or "component placement verified" unless accompanied by concrete page-specific observations.
+- Do not create final findings.
+- Do not use final-style language such as "Regulator fails thermal check",
+  "PMOS is incorrectly designed", "This trace violates current density", or
+  "Impedance violation found" unless later deterministic final-finding gates prove it.
+
+Add these keys to the returned JSON:
+{{
+  "image_id": "{path.name}",
+  "source_file": "{path}",
+  "page_number": null,
+  "observed_circuits": [],
+  "observed_refdes": [],
+  "observed_nets": [],
+  "likely_circuit_purpose": [],
+  "component_role_observations": [],
+  "engineering_concern_candidates": [],
+  "blocked_verification_candidates": [],
+  "datasheet_check_needed": [],
+  "calculation_needed": [],
+  "human_review_questions": [],
+  "not_verifiable_from_image": [],
+  "confidence": 0.0
+}}
+"""
     if kind == "schematic":
-        return f"""
+        return common + """
+For schematic pages, identify visible functional blocks, important refdes and net names,
+likely circuit purpose, and component roles suggested by the image.
+Safe examples:
+- "Observed an apparent I2C buffer/pullup section. Verify pullup sizing, bus capacitance, voltage domains, and enable pin bias."
+- "Observed an apparent 24 V input / 3.3 V regulator section. Verify regulator output load, dropout margin, thermal dissipation, and input/output capacitor requirements."
+- "Observed apparent high-side PMOS/load-switching path. Verify Vds, Vgs, gate pull network, transient exposure, and load current."
+"""
+    return common + """
+For layout/Gerber pages, identify layer/page type, visible routing/plane/features,
+possible layout or manufacturing concerns, whether coordinate/board-data is required
+before geometry claims, and what cannot be concluded from the image alone.
+"""
+
+
+def prompt_for(path: Path, kind: str, assessment_profile: str = "strict") -> str:
+    key_scope = "at least" if assessment_enabled(assessment_profile) else "exactly"
+    if kind == "schematic":
+        prompt = f"""
 Review this schematic PNG page: {path.name}
 
-Return JSON with exactly these keys:
+Return JSON with {key_scope} these keys:
 {{
   "page_type": "schematic",
   "visual_review_performed": true,
@@ -195,10 +283,13 @@ Rules:
 - Do not measure physical layout geometry from pixels.
 - Do not create final findings.
 """
-    return f"""
+        if assessment_enabled(assessment_profile):
+            prompt += engineering_annotation_prompt(path, kind)
+        return prompt
+    prompt = f"""
 Review this PCB layout/Gerber PNG page: {path.name}
 
-Return JSON with exactly these keys:
+Return JSON with {key_scope} these keys:
 {{
   "page_type": "layout",
   "visual_review_performed": true,
@@ -217,6 +308,9 @@ Rules:
 - For physical geometry, defer to board JSON / IPC-2581 evidence.
 - Do not create final findings.
 """
+    if assessment_enabled(assessment_profile):
+        prompt += engineering_annotation_prompt(path, kind)
+    return prompt
 
 
 def list_images(exports: Path, project: str) -> list[tuple[str, Path]]:
@@ -233,6 +327,213 @@ def observation_successful(observation: dict[str, Any]) -> bool:
         response.get("visual_review_performed") is True
         and response.get("confirmation_no_pixel_quantitative_claims") is True
     )
+
+
+def as_string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                out.append(text)
+    return out
+
+
+def unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out
+
+
+def normalized_claim_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower().rstrip(".:;!"))
+
+
+def is_generic_vision_claim(value: str) -> bool:
+    text = normalized_claim_text(value)
+    return text in GENERIC_VISION_CLAIMS
+
+
+def is_final_style_claim(value: str) -> bool:
+    return any(pattern.search(value) for pattern in FINAL_STYLE_CLAIM_PATTERNS)
+
+
+def filter_annotation_claims(values: list[str]) -> tuple[list[str], list[str]]:
+    kept: list[str] = []
+    rejected: list[str] = []
+    for value in unique_strings(values):
+        if is_generic_vision_claim(value) or is_final_style_claim(value):
+            rejected.append(value)
+        else:
+            kept.append(value)
+    return kept, rejected
+
+
+def page_number_from_path(path_text: str) -> int | None:
+    match = re.search(r"-p(\d+)\.png$", Path(path_text).name)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def annotation_for_observation(observation: dict[str, Any]) -> dict[str, Any]:
+    response = observation.get("response")
+    if not isinstance(response, dict):
+        response = {}
+
+    source_file = str(observation.get("file") or response.get("source_file") or "")
+    kind = str(observation.get("kind") or response.get("page_type") or "unknown")
+    page_type = str(response.get("page_type") or kind or "unknown")
+    page_number = response.get("page_number")
+    if not isinstance(page_number, int):
+        page_number = page_number_from_path(source_file)
+
+    observed_circuits = unique_strings(
+        as_string_list(response.get("observed_circuits"))
+        + as_string_list(response.get("visible_circuit_blocks"))
+        + as_string_list(response.get("visible_board_features"))
+    )
+    observed_refdes = unique_strings(
+        as_string_list(response.get("observed_refdes"))
+        + as_string_list(response.get("visible_components_or_refdes"))
+    )
+    observed_nets = unique_strings(
+        as_string_list(response.get("observed_nets"))
+        + as_string_list(response.get("visible_net_labels_or_signal_names"))
+        + as_string_list(response.get("visible_text_or_labels"))
+    )
+    role_observations = unique_strings(
+        as_string_list(response.get("component_role_observations"))
+        + as_string_list(response.get("likely_circuit_purpose"))
+    )
+
+    concern_values = (
+        as_string_list(response.get("engineering_concern_candidates"))
+        + as_string_list(response.get("possible_concerns_or_followups"))
+    )
+    blocked_values = as_string_list(response.get("blocked_verification_candidates"))
+    datasheet_values = as_string_list(response.get("datasheet_check_needed"))
+    calculation_values = (
+        as_string_list(response.get("calculation_needed"))
+        + as_string_list(response.get("possible_electrical_calculations_from_visible_values"))
+    )
+    question_values = as_string_list(response.get("human_review_questions"))
+
+    engineering_concerns, rejected_concerns = filter_annotation_claims(concern_values)
+    blocked_verifications, rejected_blocked = filter_annotation_claims(blocked_values)
+    datasheet_checks, rejected_datasheets = filter_annotation_claims(datasheet_values)
+    calculations, rejected_calculations = filter_annotation_claims(calculation_values)
+    questions, rejected_questions = filter_annotation_claims(question_values)
+    generic_from_description = [
+        value
+        for value in as_string_list(response.get("brief_description"))
+        if is_generic_vision_claim(value) or is_final_style_claim(value)
+    ]
+
+    confidence = response.get("confidence")
+    if not isinstance(confidence, (int, float)):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, float(confidence)))
+
+    return {
+        "image_id": str(response.get("image_id") or Path(source_file).name),
+        "source_file": source_file,
+        "page_number": page_number,
+        "page_type": page_type if page_type in {"schematic", "layout", "gerber", "unknown"} else kind,
+        "observed_circuits": observed_circuits,
+        "observed_refdes": observed_refdes,
+        "observed_nets": observed_nets,
+        "component_role_observations": role_observations,
+        "engineering_concern_candidates": engineering_concerns,
+        "blocked_verification_candidates": blocked_verifications,
+        "datasheet_check_needed": datasheet_checks,
+        "calculation_needed": calculations,
+        "human_review_questions": questions,
+        "not_verifiable_from_image": unique_strings(
+            as_string_list(response.get("not_verifiable_from_image"))
+            + as_string_list(response.get("limitations"))
+        ),
+        "generic_claims_rejected": unique_strings(
+            rejected_concerns
+            + rejected_blocked
+            + rejected_datasheets
+            + rejected_calculations
+            + rejected_questions
+            + generic_from_description
+        ),
+        "confidence": confidence,
+        "evidence_references": [
+            {
+                "source_file": source_file,
+                "image_id": str(response.get("image_id") or Path(source_file).name),
+                "page_number": page_number,
+            }
+        ],
+    }
+
+
+def annotations_artifact_for(
+    *,
+    project: str,
+    assessment_profile: str,
+    base_artifact: dict[str, Any],
+) -> dict[str, Any]:
+    observations = base_artifact.get("per_page_vision_observations", [])
+    annotations = [
+        annotation_for_observation(observation)
+        for observation in observations
+        if isinstance(observation, dict) and observation_successful(observation)
+    ]
+    generic_claim_count = sum(len(row["generic_claims_rejected"]) for row in annotations)
+    blockers: list[str] = []
+    if base_artifact.get("overall_pass") is not True:
+        blockers.append("image evidence review did not pass")
+    if base_artifact.get("expected_image_count", 0) != len(annotations):
+        blockers.append("annotation count does not match reviewed image count")
+
+    warnings: list[str] = []
+    if generic_claim_count:
+        warnings.append("generic or final-style vision claims were rejected from engineering annotations")
+
+    return {
+        "project": project,
+        "phase": 13,
+        "assessment_profile": assessment_profile,
+        "overall_pass": not blockers,
+        "annotation_count": len(annotations),
+        "generic_claim_count": generic_claim_count,
+        "annotations": annotations,
+        "blockers": blockers,
+        "warnings": warnings,
+    }
+
+
+def write_annotations_artifact(
+    *,
+    annotations_out: Path,
+    project: str,
+    assessment_profile: str,
+    base_artifact: dict[str, Any],
+) -> dict[str, Any]:
+    artifact = annotations_artifact_for(
+        project=project,
+        assessment_profile=assessment_profile,
+        base_artifact=base_artifact,
+    )
+    annotations_out.parent.mkdir(parents=True, exist_ok=True)
+    annotations_out.write_text(json.dumps(artifact, indent=2, ensure_ascii=False), encoding="utf-8")
+    return artifact
 
 
 def load_previous_artifact(out: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -431,6 +732,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sleep", type=float, default=0.2)
     ap.add_argument("--retries", type=int, default=2)
     ap.add_argument("--raw-out-dir", default=None)
+    ap.add_argument("--annotations-out", default=None)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args(argv)
@@ -438,6 +740,12 @@ def main(argv: list[str] | None = None) -> int:
     exports = Path(args.exports)
     out = Path(args.out) if args.out else exports / f"{args.project}-image-evidence-review.json"
     raw_out_dir = Path(args.raw_out_dir) if args.raw_out_dir else exports / "vision_raw_responses" / args.project
+    annotations_out = (
+        Path(args.annotations_out)
+        if args.annotations_out
+        else out.parent / f"{args.project}-vision-engineering-annotations.json"
+    )
+    assessment_profile = assessment_profile_from_env()
 
     base_url = env("VISION_BASE_URL", env("LLM_BASE_URL"))
     model = env("VISION_MODEL", env("LLM_MODEL"))
@@ -500,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
                 api_key=api_key or "local",
                 model=model,
                 image_path=path,
-                prompt=prompt_for(path, kind),
+                prompt=prompt_for(path, kind, assessment_profile),
                 timeout=args.timeout,
                 max_tokens=args.max_tokens,
                 retries=args.retries,
@@ -540,6 +848,18 @@ def main(argv: list[str] | None = None) -> int:
             f"Progress written: {artifact['reviewed_image_count']}/{artifact['expected_image_count']} "
             f"reviewed, errors={len(artifact['errors'])}, overall_pass={artifact['overall_pass']}"
         )
+        if assessment_enabled(assessment_profile):
+            annotations = write_annotations_artifact(
+                annotations_out=annotations_out,
+                project=args.project,
+                assessment_profile=assessment_profile,
+                base_artifact=artifact,
+            )
+            print(
+                f"Annotations written: {annotations['annotation_count']} annotations, "
+                f"generic_claim_count={annotations['generic_claim_count']}, "
+                f"overall_pass={annotations['overall_pass']}"
+            )
         time.sleep(args.sleep)
 
     artifact = write_artifacts(
@@ -556,6 +876,15 @@ def main(argv: list[str] | None = None) -> int:
     print("reviewed:", artifact["reviewed_image_count"], "/", artifact["expected_image_count"])
     print("errors:", len(errors))
     print(f"Wrote {out.parent / f'{args.project}-image-evidence-review-validation.json'}")
+    if assessment_enabled(assessment_profile):
+        annotations = write_annotations_artifact(
+            annotations_out=annotations_out,
+            project=args.project,
+            assessment_profile=assessment_profile,
+            base_artifact=artifact,
+        )
+        print(f"Wrote {annotations_out}")
+        print("annotations_overall_pass:", annotations["overall_pass"])
 
     return 0 if artifact["overall_pass"] else 2
 

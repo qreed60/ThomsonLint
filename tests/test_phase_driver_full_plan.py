@@ -30,6 +30,31 @@ def valid_vision_response(description: str = "reviewed") -> str:
     )
 
 
+def engineering_vision_response() -> str:
+    return json.dumps(
+        {
+            "page_type": "schematic",
+            "visual_review_performed": True,
+            "confirmation_no_pixel_quantitative_claims": True,
+            "brief_description": "Observed an apparent 24 V input and 3.3 V regulator section.",
+            "visible_circuit_blocks": ["24 V input / 3.3 V regulator"],
+            "visible_components_or_refdes": ["U1", "C12", "C13"],
+            "visible_net_labels_or_signal_names": ["24V_IN", "3V3"],
+            "component_role_observations": ["U1 appears to be a regulator"],
+            "engineering_concern_candidates": [
+                "Observed an apparent 24 V input / 3.3 V regulator section. Verify regulator output load, dropout margin, thermal dissipation, and input/output capacitor requirements.",
+                "routing verified",
+            ],
+            "blocked_verification_candidates": ["Regulator thermal verification is blocked until output load current is known."],
+            "datasheet_check_needed": ["Check U1 datasheet for input/output capacitor requirements."],
+            "calculation_needed": ["Calculate regulator thermal dissipation after load current is known."],
+            "human_review_questions": ["Confirm whether U1 supplies all 3V3 loads on this page."],
+            "not_verifiable_from_image": ["Output load current is not visible in the image."],
+            "confidence": 0.72,
+        }
+    )
+
+
 def create_phase13_image(exports: Path, project: str, page: int = 1) -> Path:
     exports.mkdir(parents=True, exist_ok=True)
     image = exports / f"{project}-img-sch-p{page}.png"
@@ -240,6 +265,71 @@ def test_phase13_vision_resume_retries_failed_images_and_keeps_successful_ones(
     assert observations[str(second)]["response"]["brief_description"] == "retried"
     assert artifact["errors"] == []
     assert artifact["overall_pass"] is True
+
+
+def test_phase13_strict_profile_does_not_write_engineering_annotations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("THOMSONLINT_ASSESSMENT_PROFILE", raising=False)
+    result, out, _raw_out, _calls = run_vision_review(tmp_path, monkeypatch, [valid_vision_response("strict")])
+
+    annotations = out.parent / "TestProject-vision-engineering-annotations.json"
+    assert result == 0
+    assert annotations.exists() is False
+
+
+def test_phase13_engineering_profile_prompt_and_annotations_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "engineering")
+    result, out, _raw_out, calls = run_vision_review(tmp_path, monkeypatch, [engineering_vision_response()])
+
+    annotations = read_json(out.parent / "TestProject-vision-engineering-annotations.json")
+    row = annotations["annotations"][0]
+    assert result == 0
+    assert "Engineering annotation requirements" in calls[0]["prompt"]
+    assert annotations["assessment_profile"] == "engineering"
+    assert annotations["overall_pass"] is True
+    assert annotations["annotation_count"] == 1
+    assert row["page_type"] == "schematic"
+    assert row["observed_circuits"] == ["24 V input / 3.3 V regulator"]
+    assert "U1" in row["observed_refdes"]
+    assert "3V3" in row["observed_nets"]
+
+
+def test_phase13_engineering_annotations_reject_generic_claims(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "balanced")
+    result, out, _raw_out, _calls = run_vision_review(tmp_path, monkeypatch, [engineering_vision_response()])
+
+    annotations = read_json(out.parent / "TestProject-vision-engineering-annotations.json")
+    row = annotations["annotations"][0]
+    assert result == 0
+    assert annotations["generic_claim_count"] == 1
+    assert "routing verified" in row["generic_claims_rejected"]
+    assert "routing verified" not in row["engineering_concern_candidates"]
+
+
+def test_phase13_engineering_annotations_keep_concerns_separate_from_findings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "engineering")
+    result, out, _raw_out, _calls = run_vision_review(tmp_path, monkeypatch, [engineering_vision_response()])
+
+    annotations = read_json(out.parent / "TestProject-vision-engineering-annotations.json")
+    row = annotations["annotations"][0]
+    assert result == 0
+    assert "findings" not in annotations
+    assert "findings" not in row
+    assert row["engineering_concern_candidates"]
+    assert row["blocked_verification_candidates"] == [
+        "Regulator thermal verification is blocked until output load current is known."
+    ]
 
 
 def fake_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

@@ -28,6 +28,16 @@ findings remain gated by Phase 19 and the findings validator: only verified,
 evidence-backed items may become final findings, and no AI output may mutate
 core artifacts.
 
+For Phase 13, the standard image evidence review remains
+`exports/<project>-image-evidence-review.json`. When the profile is `balanced`
+or `engineering`, Phase 13 also writes
+`exports/<project>-vision-engineering-annotations.json`. That annotation
+artifact records page-level engineering observations, concern candidates,
+blocked verifications, datasheet checks, calculations needed, and human-review
+questions. These annotations are not verified findings; they are review
+candidates for later concern generation and must remain separate until a later
+verified-finding gate proves them.
+
 For PR16-PR37, use the explicit topology_ai workflow. PR40 allows `pre01` starts from post-conversion exports:
 
 ```bash

@@ -890,6 +890,42 @@ Do not infer electrical limits from package or vendor names alone.
 
     # BEGIN STRICT PHASE 13 IMAGE VISION PROMPT
     if args.phase == 13:
+        phase13_annotation_instructions = ""
+        if assessment_profile in {"balanced", "engineering"}:
+            phase13_annotation_instructions = f"""
+
+Engineering annotation artifact for assessment profile {assessment_profile}:
+- scripts/vision_image_review.py must also write exports/{project}-vision-engineering-annotations.json.
+- Keep this artifact separate from exports/{project}-image-evidence-review.json.
+- Engineering annotations are not final findings and must not be promoted into findings in Phase 13.
+- For schematic pages, ask the vision model to identify page/image name, page type, visible functional
+  blocks, important refdes and net names, likely circuit purpose, component roles, engineering concern
+  candidates, blocked verification candidates, datasheet checks, calculations needed, human review
+  questions, not-verifiable-from-image limits, confidence, and evidence references.
+- For layout/Gerber pages, ask the vision model to identify layer/page type, visible routing/planes/features,
+  possible layout/manufacturing concerns, whether coordinate/board-data is required before geometry claims,
+  what cannot be concluded from image alone, engineering concern candidates, blocked verification candidates,
+  human review questions, confidence, and evidence references.
+- Reject or record generic visual claims such as "routing verified", "connectivity verified",
+  "power distribution verified", "layer inspected", "visual inspection passed", or
+  "component placement verified" unless they include concrete page-specific observations.
+- Do not invent numeric values.
+- Do not make exact geometry claims from screenshots/Gerber images unless tied to board-coordinate evidence.
+- Do not use final-style language such as "Regulator fails thermal check", "PMOS is incorrectly designed",
+  "This trace violates current density", or "Impedance violation found".
+
+Required assessment artifact:
+- exports/{project}-vision-engineering-annotations.json
+
+Required assessment artifact checks:
+- phase=13
+- assessment_profile="{assessment_profile}"
+- annotations is a list
+- annotation_count equals len(annotations)
+- each annotation keeps engineering_concern_candidates and blocked_verification_candidates separate from final findings
+- generic claims are absent from engineering annotations or recorded in generic_claims_rejected
+- overall_pass=true only when the image evidence review passed and annotations were produced for reviewed images
+"""
         prompt += f"""
 
 Phase 13 specific instructions:
@@ -941,6 +977,7 @@ Required pass criteria for image-evidence-review.json:
 Validation artifact (image-evidence-review-validation.json) required fields:
 - phase
 - overall_pass (bool — TOP LEVEL, not nested; true only when all review pass criteria above are met)
+{phase13_annotation_instructions}
 
 Do not create findings in Phase 13.
 Do not execute Phase 14.
