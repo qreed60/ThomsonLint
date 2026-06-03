@@ -8,6 +8,26 @@ The original phase driver covered only the evidence_review workflow, using numer
 ./scripts/run_phase_driver.sh TestProject 1 22
 ```
 
+## Full-Plan Assessment Profiles
+
+Numeric full-plan prompt generation supports `THOMSONLINT_ASSESSMENT_PROFILE`.
+The default, unset value is equivalent to `strict` and preserves the existing
+phase prompts.
+
+- `strict`: existing behavior; intermediate phases keep the current constrained
+  evidence-review wording.
+- `balanced`: phases 13-19 may record separately classified engineering concern
+  candidates, blocked verifications, datasheet checks, human review questions,
+  and calculation-needed items when they are evidence-linked and avoid final
+  pass/fail language.
+- `engineering`: same safety gates as `balanced`, intended for deeper hardware
+  engineering assessment before final findings are written.
+
+Engineering assessment output is intermediate review material only. Final
+findings remain gated by Phase 19 and the findings validator: only verified,
+evidence-backed items may become final findings, and no AI output may mutate
+core artifacts.
+
 For PR16-PR37, use the explicit topology_ai workflow. PR40 allows `pre01` starts from post-conversion exports:
 
 ```bash

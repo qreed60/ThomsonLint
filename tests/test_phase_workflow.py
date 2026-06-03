@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,32 @@ def load_module(path: Path):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def write_phase_prompt(tmp_path: Path, phase: int, profile: str | None = None) -> str:
+    out = tmp_path / f"phase{phase:02d}_prompt.md"
+    env = os.environ.copy()
+    env.pop("THOMSONLINT_ASSESSMENT_PROFILE", None)
+    if profile is not None:
+        env["THOMSONLINT_ASSESSMENT_PROFILE"] = profile
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "write_phase_prompt.py"),
+            "--project",
+            "example",
+            "--phase",
+            str(phase),
+            "--out",
+            str(out),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    return out.read_text(encoding="utf-8")
 
 
 def checkpoint_row(phase: int, phase_name: str) -> dict:
@@ -114,6 +141,55 @@ def test_phase_maps_cover_1_through_22() -> None:
     for phase_map in phase_maps:
         assert set(phase_map) == expected
     assert phase_maps[0] == phase_maps[1] == phase_maps[2]
+
+
+def test_default_phase_prompt_omits_engineering_assessment_mode(tmp_path: Path) -> None:
+    prompt = write_phase_prompt(tmp_path, 13)
+
+    assert "Engineering Assessment Mode:" not in prompt
+    assert "engineering_concern_candidate" not in prompt
+    assert "blocked_verification_candidate" not in prompt
+
+
+def test_strict_profile_omits_engineering_assessment_mode(tmp_path: Path) -> None:
+    prompt = write_phase_prompt(tmp_path, 18, "strict")
+
+    assert "Engineering Assessment Mode:" not in prompt
+    assert "datasheet_check_needed" not in prompt
+    assert "human_review_question" not in prompt
+
+
+def test_balanced_profile_adds_engineering_assessment_to_phases_13_to_19(tmp_path: Path) -> None:
+    for phase in range(13, 20):
+        prompt = write_phase_prompt(tmp_path, phase, "balanced")
+
+        assert "Engineering Assessment Mode:" in prompt
+        assert "Assessment profile: balanced" in prompt
+        assert "engineering_concern_candidate" in prompt
+        assert "blocked_verification_candidate" in prompt
+        assert "datasheet_check_needed" in prompt
+        assert "human_review_question" in prompt
+        assert "calculation_needed" in prompt
+        assert "verified facts" in prompt
+        assert "engineering observations" in prompt
+        assert "hypotheses" in prompt
+        assert "blocked verifications" in prompt
+        assert "final findings" in prompt
+        assert "Verify regulator load current and thermal dissipation; evidence page/refdes; missing current." in prompt
+        assert "Regulator fails thermal check" in prompt
+        assert "Only verified, evidence-backed items may become final findings." in prompt
+        assert "must remain separately classified" in prompt
+
+
+def test_engineering_profile_adds_assessment_only_to_target_phases(tmp_path: Path) -> None:
+    phase12 = write_phase_prompt(tmp_path, 12, "engineering")
+    phase14 = write_phase_prompt(tmp_path, 14, "engineering")
+    phase20 = write_phase_prompt(tmp_path, 20, "engineering")
+
+    assert "Engineering Assessment Mode:" not in phase12
+    assert "Engineering Assessment Mode:" in phase14
+    assert "Assessment profile: engineering" in phase14
+    assert "Engineering Assessment Mode:" not in phase20
 
 
 def test_phase11_validation_gate_allows_recorded_dfm_violations(tmp_path: Path) -> None:

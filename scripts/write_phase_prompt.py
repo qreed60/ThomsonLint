@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 
@@ -32,6 +33,69 @@ PHASES = {
     22: "Final Summary",
 }
 
+ASSESSMENT_PROFILES = {"strict", "balanced", "engineering"}
+ASSESSMENT_PHASES = set(range(13, 20))
+
+
+def assessment_profile_from_env() -> str:
+    value = os.environ.get("THOMSONLINT_ASSESSMENT_PROFILE", "").strip().lower()
+    if value == "":
+        return "strict"
+    if value not in ASSESSMENT_PROFILES:
+        raise SystemExit(
+            "Invalid THOMSONLINT_ASSESSMENT_PROFILE: "
+            f"{value!r}. Expected one of: balanced, engineering, strict."
+        )
+    return value
+
+
+def engineering_assessment_prompt(phase: int, profile: str) -> str:
+    if phase not in ASSESSMENT_PHASES or profile not in {"balanced", "engineering"}:
+        return ""
+
+    return f"""
+
+Engineering Assessment Mode:
+- Assessment profile: {profile}
+- This mode broadens intermediate engineering review only. It does not loosen final verified-finding gates.
+- AI output and phase artifacts must not mutate core artifacts.
+- Do not invent numeric values. If a needed voltage, current, temperature, dissipation, trace width,
+  spacing, material property, or operating condition is missing, record the missing value explicitly.
+
+Allowed assessment classifications for this phase:
+- engineering_concern_candidate
+- blocked_verification_candidate
+- datasheet_check_needed
+- human_review_question
+- calculation_needed
+
+Keep these categories distinct:
+- verified facts: directly supported by a cited artifact, local datasheet page/reference, schematic record,
+  BOM row, board JSON, helper output, or vision observation with a stable source path.
+- engineering observations: evidence-linked review notes that identify a possible design concern without
+  final pass/fail language.
+- hypotheses: plausible engineering interpretations that need more evidence or calculation before use.
+- blocked verifications: checks that cannot be completed because required evidence, measurements,
+  datasheet limits, or operating assumptions are missing.
+- final findings: Phase 19 output only, and only for verified, evidence-backed items that satisfy the
+  findings schema and validation gates.
+
+Intermediate phases may produce engineering concerns only when each concern:
+- is linked to concrete evidence such as an artifact path, page/reference, refdes, net, or helper result.
+- identifies the missing information or calculation needed to verify it.
+- avoids final pass/fail, compliance, or defect language.
+- avoids invented numeric values and does not substitute guesses for missing data.
+
+Examples:
+- Good: engineering_concern_candidate: "Verify regulator load current and thermal dissipation; evidence page/refdes; missing current."
+- Bad: "Regulator fails thermal check" without calculation.
+
+Final-report gate preservation:
+- Only verified, evidence-backed items may become final findings.
+- Engineering concerns, hypotheses, blocked verifications, datasheet checks, human review questions,
+  and calculation-needed items must remain separately classified unless later evidence verifies them.
+"""
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -45,6 +109,7 @@ def main() -> int:
 
     phase_name = PHASES[args.phase]
     project = args.project
+    assessment_profile = assessment_profile_from_env()
 
     prompt = f"""You are working in the ThomsonLint repository.
 
@@ -123,6 +188,7 @@ A BOM row may be marked status=found only when the datasheet PDF is downloaded a
 If SearXNG returns candidate URLs but no local file is saved, status must be ambiguous or missing, not found.
 Record candidate_urls and failed_candidate_urls in the datasheet manifest.
 """
+    prompt += engineering_assessment_prompt(args.phase, assessment_profile)
 
     # BEGIN STRICT PHASE 1 INGEST WORKFLOW PROMPT
     if args.phase == 1:

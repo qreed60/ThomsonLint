@@ -134,6 +134,7 @@ def model_routing_summary() -> dict[str, Any]:
         "THOMSONLINT_TEXT_MODEL": env_value("THOMSONLINT_TEXT_MODEL"),
         "VISION_MODEL": env_value("VISION_MODEL"),
         "THOMSONLINT_VISION_MODEL": env_value("THOMSONLINT_VISION_MODEL"),
+        "THOMSONLINT_ASSESSMENT_PROFILE": env_value("THOMSONLINT_ASSESSMENT_PROFILE"),
         "qwen_vision_configured": configured,
         "qwen_vision_invoked": False,
     }

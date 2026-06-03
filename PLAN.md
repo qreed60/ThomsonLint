@@ -906,6 +906,7 @@ These are runbook/manual orchestration variables, not working CLI flags. No impl
 | `LLM_MODEL` | OpenHands controller model name (e.g., `qwen3.6_35b_a3b_openhands`) |
 | `THOMSONLINT_TEXT_MODEL` | ThomsonLint text/reasoning model for packet execution |
 | `VISION_MODEL` or `THOMSONLINT_VISION_MODEL` | ThomsonLint vision model (`qwen_vision`) for multimodal extraction |
+| `THOMSONLINT_ASSESSMENT_PROFILE` | Numeric full-plan prompt profile: `strict` (default/unset), `balanced`, or `engineering`; non-strict profiles add evidence-linked engineering assessment instructions for Phases 13-19 without loosening final findings gates |
 
 
 ## Key Constraints and Boundaries
