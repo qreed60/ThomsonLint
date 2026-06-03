@@ -69,6 +69,50 @@ def test_full_plan_dry_run_resolves_1_to_22_in_order(tmp_path: Path, monkeypatch
     assert not list(out_dir.glob("phase[0-9][0-9]_*"))
 
 
+def test_full_plan_default_out_dir_uses_run_id_when_provided(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = fake_root(tmp_path, monkeypatch)
+    result = phase_driver.main([
+        "TestProject",
+        "--workflow",
+        "full_plan",
+        "--run-id",
+        "full_run_001",
+        "--start",
+        "1",
+        "--end",
+        "1",
+        "--dry-run",
+    ])
+    assert result == 0
+
+    run_root = root / "exports" / "TestProject" / "full_run_001"
+    run_dirs = list(run_root.glob("full_plan_*"))
+    assert len(run_dirs) == 1
+    out_dir = run_dirs[0]
+    manifest = read_json(out_dir / "full-plan-driver-manifest.json")
+    status = read_json(out_dir / "full-plan-driver-status.json")
+    stage_results = read_json(out_dir / "full-plan-driver-stage-results.json")
+    blockers = read_json(out_dir / "full-plan-driver-blockers.json")
+    assert manifest["run_id"] == "full_run_001"
+    assert status["run_id"] == "full_run_001"
+    assert stage_results["run_id"] == "full_run_001"
+    assert blockers["run_id"] == "full_run_001"
+    assert stage_results["stage_results"][0]["run_id"] == "full_run_001"
+    assert str(out_dir).endswith("/exports/TestProject/full_run_001/" + out_dir.name)
+
+
+def test_full_plan_default_out_dir_without_run_id_keeps_existing_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = fake_root(tmp_path, monkeypatch)
+    result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "1", "--end", "1", "--dry-run"])
+    assert result == 0
+
+    project_root = root / "exports" / "TestProject"
+    run_dirs = [path for path in project_root.iterdir() if path.is_dir()]
+    assert len(run_dirs) == 1
+    assert run_dirs[0].name.startswith("20")
+    assert read_json(run_dirs[0] / "full-plan-driver-manifest.json")["run_id"] is None
+
+
 def test_full_plan_start_end_limits_and_no_phase_consolidation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_root(tmp_path, monkeypatch)
     out_dir = tmp_path / "run"

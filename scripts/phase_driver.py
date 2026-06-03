@@ -747,7 +747,7 @@ def full_plan_topology_ai_subsystem_command(root: Path, project: str, phase: int
     ]
 
 
-def full_plan_stage_plan(root: Path, project: str, out_dir: Path, phases: list[int], stamp: str) -> list[dict[str, Any]]:
+def full_plan_stage_plan(root: Path, project: str, run_id_value: str | None, out_dir: Path, phases: list[int], stamp: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for phase in phases:
         phase_dir = full_plan_phase_dir(out_dir, phase, stamp)
@@ -756,6 +756,7 @@ def full_plan_stage_plan(root: Path, project: str, out_dir: Path, phases: list[i
         rows.append(
             {
                 "workflow": FULL_PLAN_WORKFLOW,
+                "run_id": run_id_value,
                 "phase_number": phase,
                 "phase_name": FULL_PLAN_PHASES[phase],
                 "phase_output_dir": str(phase_dir),
@@ -788,6 +789,7 @@ def full_plan_blocker(blocker_id: str, phase: int | None, reason: str, details: 
 
 def full_plan_stage_record(
     *,
+    run_id_value: str | None,
     phase: int,
     mode: str,
     status: str,
@@ -805,6 +807,7 @@ def full_plan_stage_record(
 ) -> dict[str, Any]:
     return {
         "workflow": FULL_PLAN_WORKFLOW,
+        "run_id": run_id_value,
         "phase_number": phase,
         "phase_name": FULL_PLAN_PHASES[phase],
         "mode": mode,
@@ -839,7 +842,10 @@ def out_dir_for_full_plan(args: argparse.Namespace, root: Path) -> Path:
     if args.out_dir:
         out_dir = Path(args.out_dir)
         return out_dir if out_dir.is_absolute() else root / out_dir
-    return root / "exports" / args.project / run_id()
+    stamp = run_id()
+    if args.run_id:
+        return root / "exports" / args.project / args.run_id / f"full_plan_{stamp}"
+    return root / "exports" / args.project / stamp
 
 
 def write_full_plan_inspection_commands(path: Path, project: str, out_dir: Path, results: list[dict[str, Any]]) -> None:
@@ -893,6 +899,7 @@ def write_full_plan_artifacts(
         "schema_version": "1.0",
         "generated_at_utc": now,
         "project": args.project,
+        "run_id": args.run_id,
         "workflow": FULL_PLAN_WORKFLOW,
         "workflow_run_dir": str(out_dir),
         "phase_range": {"start": phases[0] if phases else None, "end": phases[-1] if phases else None},
@@ -909,6 +916,7 @@ def write_full_plan_artifacts(
         "schema_version": "1.0",
         "generated_at_utc": now,
         "project": args.project,
+        "run_id": args.run_id,
         "workflow": FULL_PLAN_WORKFLOW,
         "workflow_run_dir": str(out_dir),
         "overall_status": overall_status,
@@ -927,6 +935,7 @@ def write_full_plan_artifacts(
         "schema_version": "1.0",
         "generated_at_utc": now,
         "project": args.project,
+        "run_id": args.run_id,
         "workflow": FULL_PLAN_WORKFLOW,
         "stage_results": results,
         **flags,
@@ -936,6 +945,7 @@ def write_full_plan_artifacts(
         "schema_version": "1.0",
         "generated_at_utc": now,
         "project": args.project,
+        "run_id": args.run_id,
         "workflow": FULL_PLAN_WORKFLOW,
         "blockers": blockers,
         **flags,
@@ -965,7 +975,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
     end = full_phase_number(args.end)
     phases = selected_full_plan_phases(start, end)
     stamp = run_id()
-    stage_plan = full_plan_stage_plan(root, args.project, out_dir, phases, stamp)
+    stage_plan = full_plan_stage_plan(root, args.project, args.run_id, out_dir, phases, stamp)
     blockers: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
 
@@ -999,6 +1009,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
         if args.resume and exactly_one_passed_checkpoint(checkpoint_rows, phase):
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="skipped_passed_checkpoint",
@@ -1025,6 +1036,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
             )
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="blocked",
@@ -1043,6 +1055,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
         if mode == "dry_run":
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="planned",
@@ -1064,6 +1077,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
             blockers.append(full_plan_blocker(blocker_id, phase, "phase prompt generation failed", {"return_code": completed_prompt.returncode}))
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="failed",
@@ -1085,6 +1099,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
         if mode == "prompt_only":
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="prompt_written",
@@ -1108,6 +1123,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
             blockers.append(full_plan_blocker(blocker_id, phase, "--execute requires --runner openhands or an enabled subsystem runner"))
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="blocked",
@@ -1127,6 +1143,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
             blockers.append(full_plan_blocker(blocker_id, phase, "codex runner integration is not implemented yet"))
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="blocked",
@@ -1150,6 +1167,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
             blockers.append(full_plan_blocker(blocker_id, phase, "phase runner failed", {"return_code": completed_runner.returncode}))
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="failed",
@@ -1180,6 +1198,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
             )
             results.append(
                 full_plan_stage_record(
+                    run_id_value=args.run_id,
                     phase=phase,
                     mode=mode,
                     status="blocked",
@@ -1208,6 +1227,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
             blockers.append(full_plan_blocker(blocker_id, phase, reason, {"return_code": completed_audit.returncode}))
         results.append(
             full_plan_stage_record(
+                run_id_value=args.run_id,
                 phase=phase,
                 mode=mode,
                 status=status,
@@ -1267,6 +1287,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--workflow", choices=["evidence_review", WORKFLOW, FULL_PLAN_WORKFLOW], default="evidence_review")
     parser.add_argument("--start", default="pr16")
     parser.add_argument("--end", default="pr37")
+    parser.add_argument("--run-id")
     parser.add_argument("--out-dir")
     parser.add_argument("--allow-existing-outputs", action="store_true")
     parser.add_argument("--fixtures-dir")
