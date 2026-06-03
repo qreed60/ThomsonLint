@@ -40,7 +40,7 @@
     },
     "summary": {
       "type": "object",
-      "required": ["candidate_current_input_record_count", "candidate_rating_input_record_count", "current_ingest_input_record_count", "rating_current_ingest_input_record_count", "current_candidate_normalized_record_count", "rating_current_candidate_normalized_record_count", "rating_candidate_normalized_record_count", "addenda_file_count", "addenda_records_seen", "step_count", "passed_step_count", "failed_step_count", "skipped_step_count", "blocker_count", "provenance_gap_count", "wrote_candidate_normalized_outputs", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "error_count", "warning_count"],
+      "required": ["candidate_current_input_record_count", "candidate_rating_input_record_count", "current_ingest_input_record_count", "rating_current_ingest_input_record_count", "current_candidate_normalized_record_count", "rating_current_candidate_normalized_record_count", "rating_candidate_normalized_record_count", "addenda_file_count", "addenda_records_seen", "step_count", "passed_step_count", "failed_step_count", "skipped_step_count", "blocker_count", "provenance_gap_count", "wrote_candidate_normalized_outputs", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "do_not_apply_to_core_yet", "error_count", "warning_count"],
       "properties": {
         "candidate_current_input_record_count": {"type": "integer", "minimum": 0},
         "candidate_rating_input_record_count": {"type": "integer", "minimum": 0},
@@ -66,6 +66,8 @@
         "ran_calculations": {"const": false},
         "merged_addenda": {"const": false},
         "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
+        "do_not_apply_to_core_yet": {"const": true},
         "error_count": {"type": "integer", "minimum": 0},
         "warning_count": {"type": "integer", "minimum": 0}
       },
@@ -73,7 +75,7 @@
     },
     "manifest": {
       "type": "object",
-      "required": ["project", "generated_at_utc", "schema_version", "source_artifacts", "source_candidate_input_manifest", "source_candidate_input_status", "candidate_outputs", "intermediate_outputs", "steps", "core_outputs_written", "normalized_core_outputs_written", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "requires_future_core_apply_stage", "summary", "errors", "warnings"],
+      "required": ["project", "generated_at_utc", "schema_version", "source_artifacts", "source_candidate_input_manifest", "source_candidate_input_status", "candidate_outputs", "intermediate_outputs", "steps", "core_outputs_written", "normalized_core_outputs_written", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "requires_future_core_apply_stage", "summary", "errors", "warnings"],
       "properties": {
         "project": {"type": "string"},
         "generated_at_utc": {"type": "string"},
@@ -92,6 +94,7 @@
         "ran_calculations": {"const": false},
         "merged_addenda": {"const": false},
         "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
         "requires_future_core_apply_stage": {"const": true},
         "summary": {"$ref": "#/definitions/summary"},
         "errors": {"type": "array", "items": {"type": "string"}},
@@ -101,7 +104,7 @@
     },
     "status": {
       "type": "object",
-      "required": ["project", "generated_at_utc", "schema_version", "status", "candidate_ingest_only", "wrote_candidate_normalized_outputs", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "requires_future_core_apply_stage", "current_ingest_status", "rating_current_ingest_status", "rating_model_ingest_status", "errors", "warnings"],
+      "required": ["project", "generated_at_utc", "schema_version", "status", "candidate_ingest_only", "wrote_candidate_normalized_outputs", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "requires_future_core_apply_stage", "current_ingest_status", "rating_current_ingest_status", "rating_model_ingest_status", "errors", "warnings"],
       "properties": {
         "project": {"type": "string"},
         "generated_at_utc": {"type": "string"},
@@ -117,6 +120,7 @@
         "ran_calculations": {"const": false},
         "merged_addenda": {"const": false},
         "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
         "requires_future_core_apply_stage": {"const": true},
         "current_ingest_status": {"enum": ["not_run", "passed", "failed", "skipped"]},
         "rating_current_ingest_status": {"enum": ["not_run", "passed", "failed", "skipped"]},

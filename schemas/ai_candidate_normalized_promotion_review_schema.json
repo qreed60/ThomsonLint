@@ -92,7 +92,7 @@
     },
     "summary": {
       "type": "object",
-      "required": ["candidate_current_record_count", "candidate_rating_record_count", "core_current_record_count", "core_rating_record_count", "current_review_item_count", "rating_review_item_count", "add_candidate_count", "duplicate_existing_count", "conflict_with_core_count", "missing_identity_count", "missing_value_count", "missing_unit_count", "provenance_gap_count", "unsupported_record_count", "blocked_item_count", "review_ready_item_count", "human_review_required_count", "applied_anything", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "error_count", "warning_count"],
+      "required": ["candidate_current_record_count", "candidate_rating_record_count", "core_current_record_count", "core_rating_record_count", "current_review_item_count", "rating_review_item_count", "add_candidate_count", "duplicate_existing_count", "conflict_with_core_count", "missing_identity_count", "missing_value_count", "missing_unit_count", "provenance_gap_count", "unsupported_record_count", "blocked_item_count", "review_ready_item_count", "human_review_required_count", "applied_anything", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "do_not_apply_to_core_yet", "error_count", "warning_count"],
       "properties": {
         "candidate_current_record_count": {"type": "integer", "minimum": 0},
         "candidate_rating_record_count": {"type": "integer", "minimum": 0},
@@ -119,6 +119,8 @@
         "ran_calculations": {"const": false},
         "merged_addenda": {"const": false},
         "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
+        "do_not_apply_to_core_yet": {"const": true},
         "error_count": {"type": "integer", "minimum": 0},
         "warning_count": {"type": "integer", "minimum": 0}
       },
@@ -157,7 +159,7 @@
     },
     "status": {
       "type": "object",
-      "required": ["project", "generated_at_utc", "schema_version", "status", "review_only", "applied_anything", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "requires_future_core_apply_stage", "current_review_item_count", "rating_review_item_count", "blocked_item_count", "provenance_gap_count", "errors", "warnings"],
+      "required": ["project", "generated_at_utc", "schema_version", "status", "review_only", "applied_anything", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "requires_future_core_apply_stage", "current_review_item_count", "rating_review_item_count", "blocked_item_count", "provenance_gap_count", "errors", "warnings"],
       "properties": {
         "project": {"type": "string"},
         "generated_at_utc": {"type": "string"},
@@ -172,6 +174,7 @@
         "ran_calculations": {"const": false},
         "merged_addenda": {"const": false},
         "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
         "requires_future_core_apply_stage": {"const": true},
         "current_review_item_count": {"type": "integer", "minimum": 0},
         "rating_review_item_count": {"type": "integer", "minimum": 0},

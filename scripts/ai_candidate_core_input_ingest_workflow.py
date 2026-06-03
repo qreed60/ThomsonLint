@@ -34,6 +34,10 @@ OUTPUTS = {
     "blockers": "ai-candidate-core-input-ingest-blockers.json",
 }
 
+REPORT_OUTPUTS = {
+    "summary": "ai-candidate-core-input-ingest-summary.txt",
+}
+
 INPUTS = {
     "manifest": "ai-candidate-core-input-apply-manifest.json",
     "status": "ai-candidate-core-input-apply-status.json",
@@ -111,6 +115,12 @@ PROVENANCE_FIELDS = {
     "source_promotion_candidate_id",
     "source_approval_item_id",
     "source_decision_id",
+}
+
+OPTIONAL_PROVENANCE_FIELDS = {
+    "evidence_refs",
+    "explicit_not_branch_current_a",
+    "operator_preview",
 }
 
 
@@ -263,7 +273,7 @@ def evidence_refs(record: dict[str, Any]) -> list[str]:
 
 
 def base_adapter_record(record: dict[str, Any]) -> dict[str, Any]:
-    return {
+    row = {
         "candidate_record_id": record.get("candidate_record_id"),
         "source_pr34_operation_id": record.get("source_pr34_operation_id"),
         "source_promotion_candidate_id": record.get("source_promotion_candidate_id"),
@@ -272,6 +282,11 @@ def base_adapter_record(record: dict[str, Any]) -> dict[str, Any]:
         "basis": "ai_candidate_core_input_apply",
         "evidence_refs": evidence_refs(record),
     }
+    if "explicit_not_branch_current_a" in record:
+        row["explicit_not_branch_current_a"] = record.get("explicit_not_branch_current_a")
+    if isinstance(record.get("operator_preview"), dict):
+        row["operator_preview"] = record["operator_preview"]
+    return row
 
 
 def map_current_record(record: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
@@ -478,6 +493,152 @@ def count_normalized(path: Path, key: str) -> int:
     return len(as_list(data.get(key)))
 
 
+def comparable(value: Any) -> Any:
+    if isinstance(value, float):
+        return round(value, 12)
+    return value
+
+
+def rating_name_to_current_type(value: Any) -> Any:
+    text = str(value or "")
+    if text == "current_max":
+        return "max"
+    if text == "current_typ":
+        return "typ"
+    return value
+
+
+def source_current_record_type(row: dict[str, Any]) -> Any:
+    if "branch_current_a" in row:
+        return "branch_current"
+    if "rail_current_a" in row:
+        return "rail_current"
+    if "max_current_a" in row or "typ_current_a" in row:
+        return "component_current"
+    if "rating_name" in row:
+        return "rating"
+    return row.get("record_type")
+
+
+def source_current_target_type(row: dict[str, Any]) -> Any:
+    if row.get("target_type"):
+        return row.get("target_type")
+    if "branch_current_a" in row:
+        return "branch"
+    if "rail_current_a" in row:
+        return "rail"
+    if "max_current_a" in row or "typ_current_a" in row:
+        return "component"
+    return None
+
+
+def source_current_value(row: dict[str, Any]) -> Any:
+    for key in ("value", "branch_current_a", "rail_current_a", "max_current_a", "typ_current_a"):
+        if key in row:
+            return row.get(key)
+    return None
+
+
+def source_current_type(row: dict[str, Any]) -> Any:
+    if "current_type" in row:
+        return row.get("current_type")
+    if "max_current_a" in row:
+        return "max"
+    if "typ_current_a" in row:
+        return "typ"
+    return rating_name_to_current_type(row.get("rating_name"))
+
+
+def source_match_key(row: dict[str, Any], family: str) -> tuple[Any, ...]:
+    if family == "rating_model":
+        return (
+            row.get("target_type") or row.get("normalized_target_type"),
+            row.get("refdes") or row.get("connector_ref") or row.get("target_id"),
+            row.get("pin"),
+            row.get("rail_name"),
+            row.get("branch_id"),
+            row.get("rating_name") or row.get("normalized_rating_name") or "current_max",
+            comparable(row.get("value")),
+            row.get("unit"),
+        )
+    return (
+        source_current_record_type(row),
+        source_current_target_type(row),
+        row.get("refdes"),
+        row.get("pin"),
+        row.get("rail_name"),
+        row.get("branch_id"),
+        source_current_type(row),
+        comparable(source_current_value(row)),
+        row.get("unit"),
+    )
+
+
+def output_match_key(row: dict[str, Any], family: str) -> tuple[Any, ...]:
+    if family == "rating_model":
+        return (
+            row.get("target_type") or row.get("normalized_target_type"),
+            row.get("refdes"),
+            row.get("pin"),
+            row.get("rail_name"),
+            row.get("branch_id"),
+            row.get("normalized_rating_name") or row.get("rating_name"),
+            comparable(row.get("value_a") if "value_a" in row else row.get("value")),
+            row.get("unit"),
+        )
+    return (
+        row.get("record_type"),
+        row.get("target_type"),
+        row.get("refdes"),
+        row.get("pin"),
+        row.get("rail_name"),
+        row.get("branch_id"),
+        row.get("current_type") or row.get("rating_name"),
+        comparable(row.get("value")),
+        row.get("unit"),
+    )
+
+
+def provenance_payload(row: dict[str, Any]) -> dict[str, Any]:
+    payload = {field: row.get(field) for field in sorted(PROVENANCE_FIELDS) if field in row}
+    for field in sorted(OPTIONAL_PROVENANCE_FIELDS):
+        if field in row:
+            payload[field] = row.get(field)
+    return payload
+
+
+def enrich_normalized_file(path: Path, output_key: str, source_rows: list[dict[str, Any]], family: str) -> list[dict[str, Any]]:
+    if not path.exists() or not source_rows:
+        return []
+    data = safe_load(path)
+    rows = [row for row in as_list(data.get(output_key)) if isinstance(row, dict)]
+    if not rows:
+        return []
+    gaps: list[dict[str, Any]] = []
+    keyed_sources: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for source in source_rows:
+        keyed_sources.setdefault(source_match_key(source, family), []).append(source)
+    changed = False
+    for row in rows:
+        if all(row.get(field) not in (None, "") for field in PROVENANCE_FIELDS):
+            continue
+        direct_id = row.get("candidate_record_id")
+        direct_matches = [source for source in source_rows if direct_id and source.get("candidate_record_id") == direct_id]
+        matches = direct_matches or keyed_sources.get(output_match_key(row, family), [])
+        if len(matches) == 1:
+            for key, value in provenance_payload(matches[0]).items():
+                row[key] = value
+            changed = True
+        elif len(matches) == 0:
+            gaps.append({"reason_code": "provenance_gap", "field": "candidate_record_id", "detail": f"normalized {family} record could not be mapped to candidate input: {output_match_key(row, family)}"})
+        else:
+            gaps.append({"reason_code": "provenance_gap", "field": "candidate_record_id", "detail": f"ambiguous normalized {family} provenance match: {output_match_key(row, family)}"})
+    if changed:
+        data[output_key] = rows
+        write_json(path, data)
+    return gaps
+
+
 def addenda_rows(data: dict[str, Any], key: str) -> list[Any]:
     return as_list(data.get(key))
 
@@ -518,26 +679,18 @@ def build_addenda_index(project: str, candidate_input_dir: Path, source_artifact
     }
 
 
-def detect_provenance_gaps(input_artifacts: list[dict[str, Any]], output_paths: list[Path]) -> list[dict[str, Any]]:
-    source_fields: set[str] = set()
-    for artifact in input_artifacts:
-        for key in ("current_model_inputs", "rating_model_inputs", "branch_currents", "rail_currents", "component_currents", "ratings"):
-            for row in as_list(artifact.get(key)):
-                if isinstance(row, dict):
-                    source_fields.update(set(row).intersection(PROVENANCE_FIELDS))
-    output_fields: set[str] = set()
+def detect_provenance_gaps(output_paths: list[Path]) -> list[dict[str, Any]]:
+    gaps: list[dict[str, Any]] = []
     for path in output_paths:
         data = safe_load(path)
         for key in ("normalized_currents", "normalized_ratings"):
             for row in as_list(data.get(key)):
                 if isinstance(row, dict):
-                    output_fields.update(row.keys())
-                    provenance = row.get("provenance")
-                    if isinstance(provenance, dict):
-                        output_fields.update(provenance.keys())
-    gaps = []
-    for field in sorted(source_fields - output_fields):
-        gaps.append({"reason_code": "provenance_gap", "field": field, "detail": f"{field} not present in normalized output from existing ingestion scripts"})
+                    for field in sorted(PROVENANCE_FIELDS):
+                        if row.get(field) in (None, ""):
+                            gaps.append({"reason_code": "provenance_gap", "field": field, "detail": f"{field} not present in normalized output record {row.get('record_id') or row.get('rating_id') or 'unknown'}"})
+                    if "evidence_refs" not in row:
+                        gaps.append({"reason_code": "provenance_gap", "field": "evidence_refs", "detail": f"evidence_refs not present in normalized output record {row.get('record_id') or row.get('rating_id') or 'unknown'}"})
     return gaps
 
 
@@ -565,7 +718,7 @@ def build_workflow(
     current_script = verify_script_path(current_script, repo_root)
     rating_script = verify_script_path(rating_script, repo_root)
 
-    for filename in OUTPUTS.values():
+    for filename in list(OUTPUTS.values()) + list(REPORT_OUTPUTS.values()):
         verify_output_path(out_dir / filename, out_dir, project)
     manifest_path = candidate_input_dir / INPUTS["manifest"]
     status_path = candidate_input_dir / INPUTS["status"]
@@ -663,7 +816,13 @@ def build_workflow(
                 "rating_model_candidate_ingest": "rating_model_ingest_failed",
             }.get(step["step_id"], "current_ingest_failed")
             blockers.append(blocker(code, f"{step['step_id']} failed", step["step_id"]))
-    provenance_gaps = detect_provenance_gaps([current_adapter, rating_adapter], [current_out, rating_current_out, rating_out])
+    current_source_rows = [row for key in ("branch_currents", "rail_currents", "component_currents", "ratings") for row in as_list(current_adapter.get(key)) if isinstance(row, dict)]
+    rating_source_rows = [row for key in ("branch_currents", "rail_currents", "component_currents", "ratings") for row in as_list(rating_adapter.get(key)) if isinstance(row, dict)]
+    enrichment_gaps = []
+    enrichment_gaps.extend(enrich_normalized_file(current_out, "normalized_currents", current_source_rows, "current_model"))
+    enrichment_gaps.extend(enrich_normalized_file(rating_current_out, "normalized_currents", rating_source_rows, "current_model"))
+    enrichment_gaps.extend(enrich_normalized_file(rating_out, "normalized_ratings", rating_source_rows, "rating_model"))
+    provenance_gaps = enrichment_gaps + detect_provenance_gaps([current_out, rating_current_out, rating_out])
     for gap in provenance_gaps:
         blockers.append(blocker("provenance_gap", gap["detail"]))
 
@@ -703,6 +862,8 @@ def build_workflow(
         "ran_calculations": False,
         "merged_addenda": False,
         "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
+        "do_not_apply_to_core_yet": True,
         "error_count": len(errors),
         "warning_count": len(warnings),
     }
@@ -738,6 +899,7 @@ def build_workflow(
         "ran_calculations": False,
         "merged_addenda": False,
         "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
         "requires_future_core_apply_stage": True,
         "summary": summary,
         "errors": errors,
@@ -758,6 +920,7 @@ def build_workflow(
         "ran_calculations": False,
         "merged_addenda": False,
         "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
         "requires_future_core_apply_stage": True,
         "current_ingest_status": status_for(steps, "current_candidate_ingest"),
         "rating_current_ingest_status": status_for(steps, "rating_current_candidate_ingest"),
@@ -813,6 +976,26 @@ def build_workflow(
     }
 
 
+def build_summary_text(outputs: dict[str, dict[str, Any]]) -> str:
+    summary = outputs["manifest"].get("summary") if isinstance(outputs["manifest"].get("summary"), dict) else {}
+    return "\n".join([
+        "AI candidate core input ingest summary",
+        f"candidate_rating_normalized_record_count={summary.get('rating_candidate_normalized_record_count', 0)}",
+        f"candidate_current_normalized_record_count={summary.get('current_candidate_normalized_record_count', 0)}",
+        f"provenance_gap_count={summary.get('provenance_gap_count', 0)}",
+        f"blocker_count={summary.get('blocker_count', 0)}",
+        f"warning_count={summary.get('warning_count', 0)}",
+        "wrote_core_artifacts=false",
+        "wrote_core_normalized_outputs=false",
+        "safe_for_core_apply=false",
+        "ready_for_core_apply=false",
+        "ran_current_allocation=false",
+        "ran_calculations=false",
+        "do_not_apply_to_core_yet=true",
+        "",
+    ])
+
+
 def validate_outputs(outputs: list[dict[str, Any]], schema_path: Path) -> None:
     schema = load_json(schema_path)
     jsonschema.Draft7Validator.check_schema(schema)
@@ -863,6 +1046,7 @@ def main(argv: list[str] | None = None) -> int:
         out_dir = Path(args.out_dir).resolve()
         for key in ("manifest", "status", "addenda_index", "review", "blockers"):
             write_json(out_dir / OUTPUTS[key], outputs[key])
+        (out_dir / REPORT_OUTPUTS["summary"]).write_text(build_summary_text(outputs), encoding="utf-8")
     except (OSError, ValueError, jsonschema.ValidationError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
