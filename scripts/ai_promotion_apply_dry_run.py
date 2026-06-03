@@ -293,6 +293,18 @@ def evidence_text(candidate: dict[str, Any]) -> str:
     return ""
 
 
+def operation_evidence_refs(candidate: dict[str, Any], queue_item: dict[str, Any], decision: dict[str, Any]) -> list[Any]:
+    refs: list[Any] = []
+    for source in (candidate, queue_item, decision):
+        if not isinstance(source, dict):
+            continue
+        for key in ("evidence_refs", "source_evidence_refs"):
+            for ref in as_list(source.get(key)):
+                if ref not in refs:
+                    refs.append(ref)
+    return refs
+
+
 def candidate_kind_text(candidate: dict[str, Any]) -> str:
     kind = str(candidate.get("candidate_kind") or "")
     target_identity = candidate.get("target_identity") if isinstance(candidate.get("target_identity"), dict) else {}
@@ -487,6 +499,7 @@ def build_outputs(
             "requires_future_apply_stage": True,
             "target_identity": target_identity,
             "candidate_value": candidate_value,
+            "evidence_refs": operation_evidence_refs(candidate, queue_item, decision),
             "core_match": {"match_status": match_status, "matched_core_record_ids": as_list(core_match.get("matched_core_record_ids"))},
             "approval": {
                 "decision": "approved",

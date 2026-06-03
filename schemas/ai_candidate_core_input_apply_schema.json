@@ -24,7 +24,7 @@
     },
     "summary": {
       "type": "object",
-      "required": ["dry_run_operation_count", "candidate_apply_operation_count", "current_model_records_added", "rating_model_records_added", "duplicate_operations_skipped", "addenda_operations_seen", "addenda_records_written", "addenda_records_blocked", "blocked_operation_count", "skipped_operation_count", "base_current_records_preserved", "base_rating_records_preserved", "candidate_current_record_count", "candidate_rating_record_count", "wrote_candidate_inputs", "wrote_core_artifacts", "wrote_normalized_outputs", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "error_count", "warning_count"],
+      "required": ["dry_run_operation_count", "candidate_apply_operation_count", "current_model_records_added", "rating_model_records_added", "duplicate_operations_skipped", "addenda_operations_seen", "addenda_records_written", "addenda_records_blocked", "blocked_operation_count", "skipped_operation_count", "base_current_records_preserved", "base_rating_records_preserved", "candidate_current_record_count", "candidate_rating_record_count", "wrote_candidate_inputs", "wrote_core_artifacts", "wrote_normalized_outputs", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "requires_future_core_apply_stage", "do_not_apply_to_core_yet", "error_count", "warning_count"],
       "properties": {
         "dry_run_operation_count": {"type": "integer", "minimum": 0},
         "candidate_apply_operation_count": {"type": "integer", "minimum": 0},
@@ -48,6 +48,8 @@
         "ran_calculations": {"const": false},
         "merged_addenda": {"const": false},
         "safe_for_core_apply": {"const": false},
+        "requires_future_core_apply_stage": {"const": true},
+        "do_not_apply_to_core_yet": {"const": true},
         "error_count": {"type": "integer", "minimum": 0},
         "warning_count": {"type": "integer", "minimum": 0}
       },

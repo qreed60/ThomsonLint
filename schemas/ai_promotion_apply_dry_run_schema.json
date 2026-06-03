@@ -62,7 +62,7 @@
     },
     "operation": {
       "type": "object",
-      "required": ["operation_id", "promotion_candidate_id", "approval_item_id", "decision_id", "candidate_kind", "dry_run_operation", "operation_status", "dry_run_only", "writes_core_artifact", "safe_to_apply_in_pr34", "requires_future_apply_stage", "target_identity", "candidate_value", "core_match", "approval", "preview_target", "operator_preview", "blockers", "warnings"],
+      "required": ["operation_id", "promotion_candidate_id", "approval_item_id", "decision_id", "candidate_kind", "dry_run_operation", "operation_status", "dry_run_only", "writes_core_artifact", "safe_to_apply_in_pr34", "requires_future_apply_stage", "target_identity", "candidate_value", "evidence_refs", "core_match", "approval", "preview_target", "operator_preview", "blockers", "warnings"],
       "properties": {
         "operation_id": {"type": "string"},
         "promotion_candidate_id": {"type": ["string", "null"]},
@@ -77,6 +77,7 @@
         "requires_future_apply_stage": {"const": true},
         "target_identity": {"$ref": "#/definitions/jsonObject"},
         "candidate_value": {"$ref": "#/definitions/jsonObject"},
+        "evidence_refs": {"type": "array"},
         "core_match": {"$ref": "#/definitions/jsonObject"},
         "approval": {"$ref": "#/definitions/jsonObject"},
         "preview_target": {"$ref": "#/definitions/jsonObject"},

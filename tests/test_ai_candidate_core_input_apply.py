@@ -27,6 +27,10 @@ OUTPUT_NAMES = [
     "ai-candidate-core-input-apply-diff.json",
     "ai-candidate-core-input-apply-blockers.json",
 ]
+REPORT_NAMES = [
+    "ai-candidate-core-input-apply-summary.txt",
+    "ai-candidate-core-input-apply-report.md",
+]
 FORBIDDEN_KEYS = {
     "finding_id",
     "issue_id",
@@ -235,7 +239,7 @@ def test_output_shape_manifest_status_json_safety_and_schema(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr + result.stdout
     artifacts = outputs(tmp_path)
     assert set(artifacts) == set(OUTPUT_NAMES)
-    assert set(path.name for path in out_dir(tmp_path).iterdir()) == set(OUTPUT_NAMES)
+    assert set(path.name for path in out_dir(tmp_path).iterdir()) == set(OUTPUT_NAMES + REPORT_NAMES)
     schema = read_json(SCHEMA)
     for artifact in artifacts.values():
         jsonschema.validate(instance=artifact, schema=schema)
@@ -295,6 +299,24 @@ def test_provenance_evidence_and_value_are_preserved_exactly(tmp_path: Path) -> 
     assert record["pr34_operation"]["dry_run_operation"] == "would_add"
 
 
+def test_operator_preview_evidence_ref_fallback_is_preserved(tmp_path: Path) -> None:
+    operation = op("rating", "rating_model", target={"target_type": "load_switch", "refdes": "Q1", "field_name": "current_max"}, value={"value": 0.2, "unit": "A"})
+    operation.pop("evidence_refs")
+    operation["operator_preview"] = {
+        "evidence_ref": "BSS138W page 1",
+        "explicit_note": "rating only; not branch_current_a",
+        "not_branch_current_a": True,
+    }
+    fixtures(tmp_path, [operation])
+    assert run_apply(tmp_path).returncode == 0
+    rating = output(tmp_path, "ai-candidate-rating-model-input.json")["rating_model_inputs"]
+    current = output(tmp_path, "ai-candidate-current-model-input.json")["current_model_inputs"]
+    assert len(rating) == 1
+    assert current == []
+    assert rating[0]["evidence_refs"] == ["BSS138W page 1"]
+    assert rating[0]["explicit_not_branch_current_a"] is True
+
+
 def test_base_inputs_are_preserved_and_candidates_append_after_base(tmp_path: Path) -> None:
     fixtures(tmp_path, [op("001"), op("002", "rating_model", value={"rating_a": 1.5, "unit": "A"})])
     base_current = write_json(tmp_path / "base-current.json", {"current_model_inputs": [{"base_record_id": "base_current"}]})
@@ -327,6 +349,93 @@ def test_invalid_operations_are_blocked_by_reason(tmp_path: Path) -> None:
     assert run_apply(tmp_path).returncode == 0
     codes = {row["reason_code"] for row in output(tmp_path, "ai-candidate-core-input-apply-blockers.json")["blocker_records"]}
     assert {"missing_target_identity", "missing_candidate_value", "missing_evidence", "unsupported_candidate_kind", "unsupported_dry_run_operation"}.issubset(codes)
+
+
+def test_q1_q2_rating_operations_with_operator_evidence_create_only_rating_inputs(tmp_path: Path) -> None:
+    q2 = op(
+        "op_cde90c46cbb4",
+        "rating_model",
+        target={"target_type": "load_switch", "refdes": "Q2", "field_name": "current_max"},
+        value={"value": 8.8, "unit": "A"},
+    )
+    q2.update({
+        "promotion_candidate_id": "promo_rating_model_457260c0879c",
+        "approval_item_id": "approve_1179c269a25b",
+        "operator_preview": {
+            "evidence_ref": "FDS4435BZ page 1",
+            "explicit_note": "rating only; not branch_current_a",
+            "not_branch_current_a": True,
+        },
+    })
+    q2.pop("evidence_refs")
+    q1 = op(
+        "op_33ac928966d3",
+        "rating_model",
+        target={"target_type": "load_switch", "refdes": "Q1", "field_name": "current_max"},
+        value={"value": 0.2, "unit": "A"},
+    )
+    q1.update({
+        "promotion_candidate_id": "promo_rating_model_c6924c781f53",
+        "approval_item_id": "approve_9c4366f44e61",
+        "operator_preview": {
+            "evidence_ref": "BSS138W page 1",
+            "explicit_note": "rating only; not branch_current_a",
+            "not_branch_current_a": True,
+        },
+    })
+    q1.pop("evidence_refs")
+    fixtures(tmp_path, [q2, q1])
+    assert run_apply(tmp_path).returncode == 0
+    rating = output(tmp_path, "ai-candidate-rating-model-input.json")["rating_model_inputs"]
+    current = output(tmp_path, "ai-candidate-current-model-input.json")["current_model_inputs"]
+    manifest = output(tmp_path, "ai-candidate-core-input-apply-manifest.json")
+    assert len(rating) == 2
+    assert current == []
+    assert manifest["summary"]["candidate_apply_operation_count"] == 2
+    assert manifest["summary"]["rating_model_records_added"] == 2
+    assert manifest["summary"]["current_model_records_added"] == 0
+    assert manifest["summary"]["blocked_operation_count"] == 0
+    assert {row["source_approval_item_id"] for row in rating} == {"approve_1179c269a25b", "approve_9c4366f44e61"}
+    assert {row["source_promotion_candidate_id"] for row in rating} == {"promo_rating_model_457260c0879c", "promo_rating_model_c6924c781f53"}
+    assert {row["source_pr34_operation_id"] for row in rating} == {"op_cde90c46cbb4", "op_33ac928966d3"}
+    assert "branch_current_a" not in {name for row in rating for name in target_field_names_for_test(row["target_identity"], row["candidate_value"])}
+
+
+def target_field_names_for_test(*values: Any) -> set[str]:
+    names: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"field_name", "field", "source_item_id", "target_field"} and child is not None:
+                    names.add(str(child))
+                names.update(target_field_names_for_test(child))
+        elif isinstance(value, list):
+            for child in value:
+                names.update(target_field_names_for_test(child))
+    return names
+
+
+def test_rating_operation_targeting_branch_current_a_is_blocked(tmp_path: Path) -> None:
+    operation = op("rating", "rating_model", target={"target_type": "load_switch", "refdes": "Q1", "field_name": "branch_current_a"}, value={"value": 0.2, "unit": "A"})
+    fixtures(tmp_path, [operation])
+    assert run_apply(tmp_path).returncode == 0
+    blockers = output(tmp_path, "ai-candidate-core-input-apply-blockers.json")["blocker_records"]
+    assert blockers[0]["reason_code"] == "attempted_core_write_blocked"
+
+
+def test_safety_flags_still_block_candidate_apply(tmp_path: Path) -> None:
+    unsafe_write = op("unsafe_write")
+    unsafe_write["writes_core_artifact"] = True
+    not_dry = op("not_dry")
+    not_dry["dry_run_only"] = False
+    safe_pr34 = op("safe_pr34")
+    safe_pr34["safe_to_apply_in_pr34"] = True
+    fixtures(tmp_path, [unsafe_write, not_dry, safe_pr34])
+    assert run_apply(tmp_path).returncode == 0
+    codes = {row["operation_id"]: row["reason_code"] for row in output(tmp_path, "ai-candidate-core-input-apply-blockers.json")["blocker_records"]}
+    assert codes["unsafe_write"] == "attempted_core_write_blocked"
+    assert codes["not_dry"] == "operation_not_approved_for_candidate_apply"
+    assert codes["safe_pr34"] == "operation_not_approved_for_candidate_apply"
 
 
 def test_addenda_blocked_by_default_and_include_addenda_writes_isolated_files(tmp_path: Path) -> None:
@@ -377,7 +486,7 @@ def test_outputs_inside_out_dir_forbidden_core_names_and_sources_not_modified(tm
     core = write_json(tmp_path / "TestProject-current-models-normalized.json", {"core": True})
     before = {path: path.read_text(encoding="utf-8") for path in source_files + [core]}
     assert run_apply(tmp_path).returncode == 0
-    assert {path.name for path in out_dir(tmp_path).iterdir()} == set(OUTPUT_NAMES)
+    assert {path.name for path in out_dir(tmp_path).iterdir()} == set(OUTPUT_NAMES + REPORT_NAMES)
     assert not CORE_OUTPUT_NAMES.intersection({path.name for path in out_dir(tmp_path).glob("*.json")})
     after = {path: path.read_text(encoding="utf-8") for path in before}
     assert before == after
@@ -406,6 +515,30 @@ def test_no_forbidden_fields_or_core_write_instructions_are_emitted(tmp_path: Pa
         assert '"ran_current_allocation": true' not in payload
         assert '"ran_calculations": true' not in payload
         assert '"merged_addenda": true' not in payload
+
+
+def test_summary_and_report_files_are_generated(tmp_path: Path) -> None:
+    operation = op("rating", "rating_model", target={"target_type": "load_switch", "refdes": "Q1", "field_name": "current_max"}, value={"value": 0.2, "unit": "A"})
+    operation.pop("evidence_refs")
+    operation["operator_preview"] = {"evidence_ref": "BSS138W page 1", "explicit_note": "rating only; not branch_current_a", "not_branch_current_a": True}
+    fixtures(tmp_path, [operation])
+    assert run_apply(tmp_path).returncode == 0
+    summary = (out_dir(tmp_path) / "ai-candidate-core-input-apply-summary.txt").read_text(encoding="utf-8")
+    report = (out_dir(tmp_path) / "ai-candidate-core-input-apply-report.md").read_text(encoding="utf-8")
+    for line in [
+        "candidate_apply_operation_count=1",
+        "rating_model_records_added=1",
+        "current_model_records_added=0",
+        "blocked_operation_count=0",
+        "wrote_core_artifacts=false",
+        "wrote_normalized_outputs=false",
+        "safe_for_core_apply=false",
+        "requires_future_core_apply_stage=true",
+        "do_not_apply_to_core_yet=true",
+    ]:
+        assert line in summary
+    assert "BSS138W page 1" in report
+    assert "not_branch_current_a: true" in report
 
 
 def test_candidate_record_ids_order_and_repeated_run_are_stable_except_timestamps(tmp_path: Path) -> None:

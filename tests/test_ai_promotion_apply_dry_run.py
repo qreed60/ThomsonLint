@@ -430,6 +430,7 @@ def test_rating_load_switch_candidates_are_not_branch_current_and_reported(tmp_p
     assert artifact["summary"]["dry_run_operation_count"] == 2
     assert artifact["summary"]["rating_model_operation_count"] == 2
     assert all(op["operator_preview"]["not_branch_current_a"] is True for op in artifact["dry_run_operations"])
+    assert {tuple(op["evidence_refs"]) for op in artifact["dry_run_operations"]} == {("FDS4435BZ page 1",), ("BSS138W page 1",)}
     assert "branch_current_a" not in {name for op in artifact["dry_run_operations"] for name in target_field_names_for_test(op["target_identity"], op["candidate_value"])}
     report = read_json(tmp_path / "exports" / "TestProject" / "ai_promotion_apply_dry_run" / "ai-approved-apply-preview-report.json")
     md = (tmp_path / "exports" / "TestProject" / "ai_promotion_apply_dry_run" / "ai-approved-apply-preview-report.md").read_text(encoding="utf-8")
