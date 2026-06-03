@@ -21,6 +21,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+STRICT_JSON_ONLY_PROMPT = (
+    "Return only minified valid JSON. No markdown. No prose. No comments. "
+    "No trailing commas. Escape quotes inside strings. Output exactly one JSON object."
+)
+
 
 def env(name: str, default: str | None = None) -> str | None:
     value = os.environ.get(name)
@@ -95,11 +100,56 @@ def post_chat_completion(
         raise RuntimeError(f"unexpected response shape: {json.dumps(data)[:1000]}") from e
 
 
-def extract_json(text: str) -> dict[str, Any]:
+def strip_markdown_fences(text: str) -> str:
     cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        cleaned = cleaned.removeprefix("json").strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+
+    lines = cleaned.splitlines()
+    if not lines:
+        return cleaned
+    if not lines[0].strip().startswith("```"):
+        return cleaned
+
+    lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def first_complete_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(text)):
+        char = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+
+    return None
+
+
+def extract_json(text: str) -> dict[str, Any]:
+    cleaned = strip_markdown_fences(text)
 
     try:
         parsed = json.loads(cleaned)
@@ -108,10 +158,9 @@ def extract_json(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start >= 0 and end > start:
-        parsed = json.loads(cleaned[start : end + 1])
+    object_text = first_complete_json_object(cleaned)
+    if object_text:
+        parsed = json.loads(object_text)
         if isinstance(parsed, dict):
             return parsed
 
@@ -209,6 +258,81 @@ def load_previous_artifact(out: Path) -> tuple[list[dict[str, Any]], list[dict[s
     )
 
 
+def safe_stem(path: Path) -> str:
+    return "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in path.name)
+
+
+def raw_response_path(raw_out_dir: Path, image_path: Path, attempt: int) -> Path:
+    return raw_out_dir / f"{safe_stem(image_path)}.attempt{attempt}.txt"
+
+
+def write_raw_response(raw_out_dir: Path, image_path: Path, attempt: int, content: str) -> Path:
+    path = raw_response_path(raw_out_dir, image_path, attempt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def review_image_with_retries(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    image_path: Path,
+    prompt: str,
+    timeout: int,
+    max_tokens: int,
+    retries: int,
+    raw_out_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    parse_errors: list[dict[str, Any]] = []
+    raw_paths: list[str] = []
+    attempts = max(0, retries) + 1
+
+    for attempt in range(1, attempts + 1):
+        attempt_prompt = prompt if attempt == 1 else f"{STRICT_JSON_ONLY_PROMPT}\n\n{prompt}"
+        content = post_chat_completion(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            image_path=image_path,
+            prompt=attempt_prompt,
+            timeout=timeout,
+            max_tokens=max_tokens,
+        )
+        raw_path = write_raw_response(raw_out_dir, image_path, attempt, content)
+        raw_paths.append(str(raw_path))
+        try:
+            parsed = extract_json(content)
+            diagnostics = {
+                "raw_response_path": str(raw_path),
+                "raw_response_paths": raw_paths,
+                "parse_errors": parse_errors,
+                "retry_count_used": attempt - 1,
+            }
+            return parsed, diagnostics
+        except Exception as exc:
+            parse_errors.append(
+                {
+                    "attempt": attempt,
+                    "raw_response_path": str(raw_path),
+                    "error": str(exc),
+                }
+            )
+
+    raise ValueError(
+        json.dumps(
+            {
+                "message": "model did not return valid JSON after retries",
+                "retry_count_used": attempts - 1,
+                "raw_response_paths": raw_paths,
+                "parse_errors": parse_errors,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def artifact_for(
     *,
     project: str,
@@ -283,6 +407,7 @@ def write_artifacts(
     out.write_text(json.dumps(artifact, indent=2, ensure_ascii=False), encoding="utf-8")
 
     validation_artifact = {
+        "phase": 13,
         "inventory_exists": True,
         "required_fields_present": True,
         "pages_actually_opened_count": artifact["reviewed_image_count"],
@@ -295,7 +420,7 @@ def write_artifacts(
     return artifact
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default="example")
     ap.add_argument("--exports", default="exports")
@@ -304,12 +429,15 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--max-tokens", type=int, default=1200)
     ap.add_argument("--sleep", type=float, default=0.2)
+    ap.add_argument("--retries", type=int, default=2)
+    ap.add_argument("--raw-out-dir", default=None)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--force", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     exports = Path(args.exports)
     out = Path(args.out) if args.out else exports / f"{args.project}-image-evidence-review.json"
+    raw_out_dir = Path(args.raw_out_dir) if args.raw_out_dir else exports / "vision_raw_responses" / args.project
 
     base_url = env("VISION_BASE_URL", env("LLM_BASE_URL"))
     model = env("VISION_MODEL", env("LLM_MODEL"))
@@ -367,7 +495,7 @@ def main() -> int:
         errors = [err for err in errors if str(err.get("file") or "") != path_key]
 
         try:
-            content = post_chat_completion(
+            parsed, diagnostics = review_image_with_retries(
                 base_url=base_url,
                 api_key=api_key or "local",
                 model=model,
@@ -375,19 +503,28 @@ def main() -> int:
                 prompt=prompt_for(path, kind),
                 timeout=args.timeout,
                 max_tokens=args.max_tokens,
+                retries=args.retries,
+                raw_out_dir=raw_out_dir,
             )
-            parsed = extract_json(content)
             observation = {
                 "file": path_key,
                 "kind": kind,
                 "model": model,
+                **diagnostics,
                 "response": parsed,
             }
             by_file[path_key] = observation
             observations = [by_file[file_name] for file_name in target_order if file_name in by_file]
             print(f"PASS vision review: {path.name}")
         except Exception as e:
-            errors.append({"file": path_key, "kind": kind, "error": str(e)})
+            error: dict[str, Any] = {"file": path_key, "kind": kind, "model": model, "error": str(e)}
+            try:
+                details = json.loads(str(e))
+                if isinstance(details, dict):
+                    error.update(details)
+            except Exception:
+                pass
+            errors.append(error)
             print(f"FAIL vision review: {path.name}: {e}", file=sys.stderr)
 
         artifact = write_artifacts(

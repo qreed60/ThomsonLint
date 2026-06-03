@@ -13,10 +13,70 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import phase_driver  # noqa: E402
+import vision_image_review  # noqa: E402
 
 
 def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def valid_vision_response(description: str = "reviewed") -> str:
+    return json.dumps(
+        {
+            "visual_review_performed": True,
+            "confirmation_no_pixel_quantitative_claims": True,
+            "brief_description": description,
+        }
+    )
+
+
+def create_phase13_image(exports: Path, project: str, page: int = 1) -> Path:
+    exports.mkdir(parents=True, exist_ok=True)
+    image = exports / f"{project}-img-sch-p{page}.png"
+    image.write_bytes(b"png")
+    return image
+
+
+def run_vision_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    responses: list[str],
+    *,
+    project: str = "TestProject",
+    extra_args: list[str] | None = None,
+) -> tuple[int, Path, Path, list[dict[str, Any]]]:
+    exports = tmp_path / "exports"
+    create_phase13_image(exports, project)
+    out = tmp_path / "review.json"
+    raw_out = tmp_path / "raw"
+    calls: list[dict[str, Any]] = []
+
+    monkeypatch.setenv("VISION_BASE_URL", "http://local/v1")
+    monkeypatch.setenv("VISION_MODEL", "kimi_vision")
+
+    def fake_post_chat_completion(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        if not responses:
+            raise AssertionError("unexpected vision model call")
+        return responses.pop(0)
+
+    monkeypatch.setattr(vision_image_review, "post_chat_completion", fake_post_chat_completion)
+    args = [
+        "--project",
+        project,
+        "--exports",
+        str(exports),
+        "--out",
+        str(out),
+        "--raw-out-dir",
+        str(raw_out),
+        "--sleep",
+        "0",
+    ]
+    if extra_args:
+        args.extend(extra_args)
+    result = vision_image_review.main(args)
+    return result, out, raw_out, calls
 
 
 def write_checkpoint(root: Path, project: str, phase: int, *, passed: bool = True) -> None:
@@ -38,6 +98,148 @@ def write_checkpoint(root: Path, project: str, phase: int, *, passed: bool = Tru
     }
     with checkpoint.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row) + "\n")
+
+
+def test_phase13_vision_valid_json_first_try_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    result, out, raw_out, calls = run_vision_review(tmp_path, monkeypatch, [valid_vision_response()])
+
+    artifact = read_json(out)
+    assert result == 0
+    assert artifact["overall_pass"] is True
+    assert artifact["phase_13_completed"] is True
+    assert artifact["vision_model"] == "kimi_vision"
+    assert artifact["per_page_vision_observations"][0]["retry_count_used"] == 0
+    assert Path(artifact["per_page_vision_observations"][0]["raw_response_path"]).is_file()
+    assert list(raw_out.glob("*.attempt1.txt"))
+    assert len(calls) == 1
+
+
+def test_phase13_vision_malformed_first_response_then_valid_retry_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, out, _raw_out, calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        ["```json\n{\"visual_review_performed\": true,\n```", valid_vision_response("retry")],
+    )
+
+    observation = read_json(out)["per_page_vision_observations"][0]
+    assert result == 0
+    assert observation["response"]["brief_description"] == "retry"
+    assert observation["retry_count_used"] == 1
+    assert len(observation["parse_errors"]) == 1
+    assert len(observation["raw_response_paths"]) == 2
+    assert calls[1]["prompt"].startswith(vision_image_review.STRICT_JSON_ONLY_PROMPT)
+
+
+def test_phase13_vision_extra_text_after_complete_json_object_is_parsed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, out, _raw_out, _calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        [valid_vision_response("complete") + "\nAdditional prose the model should not have added."],
+    )
+
+    artifact = read_json(out)
+    assert result == 0
+    assert artifact["overall_pass"] is True
+    assert artifact["per_page_vision_observations"][0]["response"]["brief_description"] == "complete"
+
+
+def test_phase13_vision_malformed_after_all_retries_records_error_and_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, out, raw_out, _calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        ["not json", "{\"still\": ", "```json\n[]\n```"],
+    )
+
+    artifact = read_json(out)
+    assert result == 2
+    assert artifact["overall_pass"] is False
+    assert artifact["phase_13_completed"] is False
+    assert artifact["reviewed_image_count"] == 0
+    assert len(artifact["errors"]) == 1
+    assert artifact["errors"][0]["retry_count_used"] == 2
+    assert len(artifact["errors"][0]["parse_errors"]) == 3
+    assert len(list(raw_out.glob("*.txt"))) == 3
+
+
+def test_phase13_vision_raw_response_file_is_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    result, out, _raw_out, _calls = run_vision_review(tmp_path, monkeypatch, [valid_vision_response("raw")])
+
+    observation = read_json(out)["per_page_vision_observations"][0]
+    raw_path = Path(observation["raw_response_path"])
+    assert result == 0
+    assert raw_path.read_text(encoding="utf-8") == valid_vision_response("raw")
+
+
+def test_phase13_vision_resume_retries_failed_images_and_keeps_successful_ones(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = "TestProject"
+    exports = tmp_path / "exports"
+    first = create_phase13_image(exports, project, 1)
+    second = create_phase13_image(exports, project, 2)
+    out = tmp_path / "review.json"
+    raw_out = tmp_path / "raw"
+    previous = {
+        "per_page_vision_observations": [
+            {
+                "file": str(first),
+                "kind": "schematic",
+                "model": "kimi_vision",
+                "response": {
+                    "visual_review_performed": True,
+                    "confirmation_no_pixel_quantitative_claims": True,
+                    "brief_description": "kept",
+                },
+            }
+        ],
+        "errors": [{"file": str(second), "kind": "schematic", "error": "old parse error"}],
+    }
+    out.write_text(json.dumps(previous), encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+    responses = [valid_vision_response("retried")]
+    monkeypatch.setenv("VISION_BASE_URL", "http://local/v1")
+    monkeypatch.setenv("VISION_MODEL", "kimi_vision")
+
+    def fake_post_chat_completion(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return responses.pop(0)
+
+    monkeypatch.setattr(vision_image_review, "post_chat_completion", fake_post_chat_completion)
+    result = vision_image_review.main(
+        [
+            "--project",
+            project,
+            "--exports",
+            str(exports),
+            "--out",
+            str(out),
+            "--raw-out-dir",
+            str(raw_out),
+            "--sleep",
+            "0",
+            "--resume",
+        ]
+    )
+
+    artifact = read_json(out)
+    observations = {row["file"]: row for row in artifact["per_page_vision_observations"]}
+    assert result == 0
+    assert len(calls) == 1
+    assert calls[0]["image_path"] == second
+    assert observations[str(first)]["response"]["brief_description"] == "kept"
+    assert observations[str(second)]["response"]["brief_description"] == "retried"
+    assert artifact["errors"] == []
+    assert artifact["overall_pass"] is True
 
 
 def fake_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
