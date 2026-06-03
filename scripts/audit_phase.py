@@ -69,6 +69,24 @@ FINAL_STYLE_CLAIM_FRAGMENTS = [
     "impedance violation found",
     "impedance violations found",
 ]
+REPORT_SECTION_FIELDS = [
+    "verified_findings",
+    "engineering_concerns",
+    "blocked_verifications",
+    "datasheet_checks_needed",
+    "calculations_needed",
+    "human_review_questions",
+    "rejected_or_unsupported",
+]
+REPORT_SECTION_COUNT_FIELDS = {
+    "verified_findings": "verified_findings_count",
+    "engineering_concerns": "engineering_concerns_count",
+    "blocked_verifications": "blocked_verifications_count",
+    "datasheet_checks_needed": "datasheet_checks_needed_count",
+    "calculations_needed": "calculations_needed_count",
+    "human_review_questions": "human_review_questions_count",
+    "rejected_or_unsupported": "rejected_or_unsupported_count",
+}
 
 
 def assessment_enabled() -> bool:
@@ -82,7 +100,7 @@ def normalized_claim(value: str) -> str:
 
 def candidate_text(candidate: dict[str, Any]) -> str:
     parts: list[str] = []
-    for field in ["title", "statement", "engineering_basis", "notes"]:
+    for field in ["title", "summary", "statement", "description", "engineering_basis", "notes"]:
         value = candidate.get(field)
         if isinstance(value, str):
             parts.append(value)
@@ -137,6 +155,29 @@ def validate_phase18_candidate_artifact(path: Path, data: dict[str, Any]) -> Non
             fail(f"{path} verified_finding_candidates[{idx}] contains unsupported final-style claim")
         if any(char.isdigit() for char in text) and not has_deterministic_calculation_evidence(row):
             fail(f"{path} verified_finding_candidates[{idx}] has numeric conclusion without deterministic calculation evidence")
+
+
+def validate_report_sections_artifact(path: Path, data: dict[str, Any]) -> None:
+    if data.get("phase") != "report":
+        fail(f"{path} phase must be report")
+    if data.get("assessment_profile") not in {"balanced", "engineering"}:
+        fail(f"{path} assessment_profile must be balanced or engineering")
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        fail(f"{path} summary must be an object")
+    for section in REPORT_SECTION_FIELDS:
+        rows = data.get(section)
+        if not isinstance(rows, list):
+            fail(f"{path} {section} must be a list")
+        count_field = REPORT_SECTION_COUNT_FIELDS[section]
+        if summary.get(count_field) != len(rows):
+            fail(f"{path} summary.{count_field} does not match {section} length")
+    verified_text = " ".join(candidate_text(row) for row in data.get("verified_findings", []) if isinstance(row, dict))
+    normalized = normalized_claim(verified_text)
+    if any(claim in normalized for claim in GENERIC_CANDIDATE_CLAIMS):
+        fail(f"{path} verified_findings contains generic visual claim")
+    if any(fragment in normalized for fragment in FINAL_STYLE_CLAIM_FRAGMENTS):
+        fail(f"{path} verified_findings contains unsupported final-style claim")
 
 CHECKPOINT_KEYS = [
     "phase_number",
@@ -694,6 +735,12 @@ def audit_phase(exports: Path, project: str, phase: int) -> None:
     elif phase == 21:
         require_file(exports / f"{project}-review.html")
         require_true(exports / f"{project}-report-generation-validation.json", "overall_pass")
+        if assessment_enabled():
+            sections_path = exports / f"{project}-engineering-assessment-report-sections.json"
+            sections = load_json(sections_path)
+            if not isinstance(sections, dict):
+                fail(f"{sections_path} must be a JSON object, not a list")
+            validate_report_sections_artifact(sections_path, sections)
 
     elif phase == 22:
         for p in range(1, 23):

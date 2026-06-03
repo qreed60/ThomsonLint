@@ -137,6 +137,24 @@ FINAL_STYLE_CLAIM_FRAGMENTS = [
     "impedance violation found",
     "impedance violations found",
 ]
+REPORT_SECTION_FIELDS = [
+    "verified_findings",
+    "engineering_concerns",
+    "blocked_verifications",
+    "datasheet_checks_needed",
+    "calculations_needed",
+    "human_review_questions",
+    "rejected_or_unsupported",
+]
+REPORT_SECTION_COUNT_FIELDS = {
+    "verified_findings": "verified_findings_count",
+    "engineering_concerns": "engineering_concerns_count",
+    "blocked_verifications": "blocked_verifications_count",
+    "datasheet_checks_needed": "datasheet_checks_needed_count",
+    "calculations_needed": "calculations_needed_count",
+    "human_review_questions": "human_review_questions_count",
+    "rejected_or_unsupported": "rejected_or_unsupported_count",
+}
 
 
 def assessment_profile_from_env() -> str:
@@ -151,6 +169,8 @@ def phase_artifact_templates(phase: int) -> list[str]:
     templates = list(PHASE_ARTIFACTS.get(phase, []))
     if phase == 13 and assessment_enabled():
         templates.append("exports/{project}-vision-engineering-annotations.json")
+    if phase == 21 and assessment_enabled():
+        templates.append("exports/{project}-engineering-assessment-report-sections.json")
     return templates
 
 
@@ -160,7 +180,7 @@ def normalized_claim(value: str) -> str:
 
 def candidate_text(candidate: dict[str, Any]) -> str:
     parts: list[str] = []
-    for field in ["title", "statement", "engineering_basis", "notes"]:
+    for field in ["title", "summary", "statement", "description", "engineering_basis", "notes"]:
         value = candidate.get(field)
         if isinstance(value, str):
             parts.append(value)
@@ -221,6 +241,33 @@ def phase18_candidate_artifact_blockers(path: Path, data: dict[str, Any]) -> lis
             blockers.append(f"{path} verified_finding_candidates[{idx}] contains unsupported final-style claim")
         if any(char.isdigit() for char in text) and not has_deterministic_calculation_evidence(row):
             blockers.append(f"{path} verified_finding_candidates[{idx}] has numeric conclusion without deterministic calculation evidence")
+    return blockers
+
+
+def report_sections_artifact_blockers(path: Path, data: dict[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if data.get("phase") != "report":
+        blockers.append(f"{path} phase must be report")
+    if data.get("assessment_profile") not in {"balanced", "engineering"}:
+        blockers.append(f"{path} assessment_profile must be balanced or engineering")
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        blockers.append(f"{path} summary must be an object")
+        summary = {}
+    for section in REPORT_SECTION_FIELDS:
+        rows = data.get(section)
+        if not isinstance(rows, list):
+            blockers.append(f"{path} {section} must be a list")
+            continue
+        count_field = REPORT_SECTION_COUNT_FIELDS[section]
+        if summary.get(count_field) != len(rows):
+            blockers.append(f"{path} summary.{count_field} does not match {section} length")
+    verified_text = " ".join(candidate_text(row) for row in data.get("verified_findings", []) if isinstance(row, dict))
+    normalized = normalized_claim(verified_text)
+    if any(claim in normalized for claim in GENERIC_CANDIDATE_CLAIMS):
+        blockers.append(f"{path} verified_findings contains generic visual claim")
+    if any(fragment in normalized for fragment in FINAL_STYLE_CLAIM_FRAGMENTS):
+        blockers.append(f"{path} verified_findings contains unsupported final-style claim")
     return blockers
 
 CHECKPOINT_KEYS = [
@@ -601,6 +648,8 @@ def artifact_passes(path: Path, phase: int) -> tuple[bool, list[str]]:
                 blockers.append(f"{path} assessment_profile is not balanced or engineering")
         if phase == 18 and path.name.endswith("-candidate-findings.json") and assessment_enabled():
             blockers.extend(phase18_candidate_artifact_blockers(path, data))
+        if phase == 21 and path.name.endswith("-engineering-assessment-report-sections.json") and assessment_enabled():
+            blockers.extend(report_sections_artifact_blockers(path, data))
 
     return not blockers, blockers
 

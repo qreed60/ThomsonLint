@@ -47,6 +47,48 @@ def write_phase_prompt(tmp_path: Path, phase: int, profile: str | None = None) -
     return out.read_text(encoding="utf-8")
 
 
+def minimal_findings(project: str = "TestProject") -> dict:
+    return {
+        "project_name": project,
+        "review_date": "2026-06-03",
+        "issues": [],
+        "verified_checks": [],
+        "cross_checks": [],
+    }
+
+
+def run_gen_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    profile: str | None = None,
+    candidate: dict | None = None,
+) -> subprocess.CompletedProcess[str]:
+    exports = tmp_path / "exports"
+    exports.mkdir(parents=True, exist_ok=True)
+    findings = exports / "TestProject-findings.json"
+    findings.write_text(json.dumps(minimal_findings()), encoding="utf-8")
+    if candidate is not None:
+        (exports / "TestProject-candidate-findings.json").write_text(json.dumps(candidate), encoding="utf-8")
+    env = os.environ.copy()
+    env.pop("THOMSONLINT_ASSESSMENT_PROFILE", None)
+    if profile:
+        env["THOMSONLINT_ASSESSMENT_PROFILE"] = profile
+    return subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "gen_report.py"),
+            str(findings),
+            "--output",
+            str(exports),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+
 def checkpoint_row(phase: int, phase_name: str) -> dict:
     return {
         "phase_number": phase,
@@ -106,7 +148,24 @@ def phase18_expanded_candidate_artifact(**overrides: object) -> dict:
                 "notes": [],
             }
         ],
-        "datasheet_check_candidates": [],
+        "datasheet_check_candidates": [
+            {
+                "candidate_id": "ds_001",
+                "candidate_type": "datasheet_check_candidate",
+                "title": "Check regulator capacitor requirements",
+                "statement": "Review U1 datasheet for input and output capacitor requirements.",
+                "engineering_basis": "Vision annotation suggests a regulator section but capacitor requirements are unverified.",
+                "evidence_refs": ["exports/TestProject-vision-engineering-annotations.json#annotation-1"],
+                "source_artifacts": ["exports/TestProject-vision-engineering-annotations.json"],
+                "observed_refdes": ["U1"],
+                "missing_information": ["U1 datasheet capacitor requirements"],
+                "recommended_next_check": "Open U1 datasheet and record required capacitor values and ESR constraints.",
+                "confidence": 0.6,
+                "promotion_eligibility": "needs_datasheet",
+                "final_finding_allowed": False,
+                "notes": [],
+            }
+        ],
         "calculation_candidates": [
             {
                 "candidate_id": "calc_001",
@@ -124,7 +183,25 @@ def phase18_expanded_candidate_artifact(**overrides: object) -> dict:
                 "notes": [],
             }
         ],
-        "human_review_candidates": [],
+        "human_review_candidates": [
+            {
+                "candidate_id": "hr_001",
+                "candidate_type": "human_review_candidate",
+                "title": "Confirm regulator load ownership",
+                "statement": "Confirm whether U1 supplies all 3V3 loads on the annotated page.",
+                "engineering_basis": "Load ownership is ambiguous from image-only evidence.",
+                "evidence_refs": ["exports/TestProject-vision-engineering-annotations.json#annotation-1"],
+                "source_artifacts": ["exports/TestProject-vision-engineering-annotations.json"],
+                "observed_refdes": ["U1"],
+                "observed_nets": ["3V3"],
+                "missing_information": ["load ownership"],
+                "recommended_next_check": "Engineer should confirm load tree before final thermal/current claims.",
+                "confidence": 0.55,
+                "promotion_eligibility": "human_review",
+                "final_finding_allowed": False,
+                "notes": [],
+            }
+        ],
         "rejected_or_unsupported_candidates": [
             {
                 "candidate_id": "rej_001",
@@ -143,9 +220,9 @@ def phase18_expanded_candidate_artifact(**overrides: object) -> dict:
             "verified_finding_candidate_count": 0,
             "engineering_concern_candidate_count": 1,
             "blocked_verification_candidate_count": 1,
-            "datasheet_check_candidate_count": 0,
+            "datasheet_check_candidate_count": 1,
             "calculation_candidate_count": 1,
-            "human_review_candidate_count": 0,
+            "human_review_candidate_count": 1,
             "rejected_or_unsupported_candidate_count": 1,
         },
         "blockers": [],
@@ -405,9 +482,9 @@ def test_phase18_engineering_rejects_unsupported_final_style_verified_candidate(
             "verified_finding_candidate_count": 1,
             "engineering_concern_candidate_count": 1,
             "blocked_verification_candidate_count": 1,
-            "datasheet_check_candidate_count": 0,
+            "datasheet_check_candidate_count": 1,
             "calculation_candidate_count": 1,
-            "human_review_candidate_count": 0,
+            "human_review_candidate_count": 1,
             "rejected_or_unsupported_candidate_count": 1,
         },
     )
@@ -443,9 +520,9 @@ def test_phase18_engineering_rejects_generic_visual_verified_candidate(
             "verified_finding_candidate_count": 1,
             "engineering_concern_candidate_count": 1,
             "blocked_verification_candidate_count": 1,
-            "datasheet_check_candidate_count": 0,
+            "datasheet_check_candidate_count": 1,
             "calculation_candidate_count": 1,
-            "human_review_candidate_count": 0,
+            "human_review_candidate_count": 1,
             "rejected_or_unsupported_candidate_count": 1,
         },
     )
@@ -455,6 +532,95 @@ def test_phase18_engineering_rejects_generic_visual_verified_candidate(
 
     assert ok is False
     assert any("generic visual claim" in blocker for blocker in blockers)
+
+
+def test_report_strict_profile_preserves_existing_behavior(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = run_gen_report(tmp_path, monkeypatch)
+
+    exports = tmp_path / "exports"
+    assert result.returncode == 0, result.stderr
+    assert (exports / "TestProject-review.html").exists()
+    assert not (exports / "TestProject-engineering-assessment-report-sections.json").exists()
+    assert '"assessment_profile": "strict"' in (exports / "TestProject-review.html").read_text(encoding="utf-8")
+
+
+def test_report_engineering_profile_creates_separate_assessment_sections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = run_gen_report(tmp_path, monkeypatch, profile="engineering", candidate=phase18_expanded_candidate_artifact())
+
+    exports = tmp_path / "exports"
+    sections = json.loads((exports / "TestProject-engineering-assessment-report-sections.json").read_text(encoding="utf-8"))
+    html = (exports / "TestProject-review.html").read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert sections["summary"]["verified_findings_count"] == 0
+    assert sections["summary"]["engineering_concerns_count"] == 1
+    assert sections["summary"]["blocked_verifications_count"] == 1
+    assert sections["summary"]["datasheet_checks_needed_count"] == 1
+    assert sections["summary"]["calculations_needed_count"] == 1
+    assert sections["summary"]["human_review_questions_count"] == 1
+    assert sections["engineering_concerns"][0]["summary"] == "Apparent load-switching section needs review"
+    assert sections["blocked_verifications"][0]["summary"] == "Impedance cannot be verified"
+    assert sections["verified_findings"] == []
+    assert "Engineering Concerns" in html
+    assert "Blocked Verifications" in html
+    assert "Datasheet Checks Needed" in html
+    assert "Calculations Needed" in html
+    assert "Human Review Questions" in html
+
+
+def test_report_engineering_sections_do_not_promote_concerns_to_verified_findings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = run_gen_report(tmp_path, monkeypatch, profile="balanced", candidate=phase18_expanded_candidate_artifact())
+
+    sections = json.loads((tmp_path / "exports" / "TestProject-engineering-assessment-report-sections.json").read_text(encoding="utf-8"))
+    concern_text = json.dumps(sections["engineering_concerns"])
+    verified_text = json.dumps(sections["verified_findings"])
+    assert result.returncode == 0, result.stderr
+    assert "V24P0 high-side PMOS" in concern_text
+    assert "V24P0 high-side PMOS" not in verified_text
+    assert "Impedance cannot be verified" in json.dumps(sections["blocked_verifications"])
+    assert "Impedance cannot be verified" not in verified_text
+
+
+def test_report_engineering_rejects_unsupported_final_style_verified_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = phase18_expanded_candidate_artifact(
+        verified_finding_candidates=[
+            {
+                "candidate_id": "vf_bad",
+                "candidate_type": "verified_finding_candidate",
+                "title": "Regulator fails thermal check",
+                "statement": "Regulator fails thermal check.",
+                "engineering_basis": "No deterministic calculation cited.",
+                "evidence_refs": ["exports/TestProject-vision-engineering-annotations.json"],
+                "source_artifacts": ["exports/TestProject-vision-engineering-annotations.json"],
+                "final_finding_allowed": False,
+            }
+        ],
+        summary={
+            "verified_finding_candidate_count": 1,
+            "engineering_concern_candidate_count": 1,
+            "blocked_verification_candidate_count": 1,
+            "datasheet_check_candidate_count": 1,
+            "calculation_candidate_count": 1,
+            "human_review_candidate_count": 1,
+            "rejected_or_unsupported_candidate_count": 1,
+        },
+    )
+
+    result = run_gen_report(tmp_path, monkeypatch, profile="engineering", candidate=candidate)
+
+    assert result.returncode == 1
+    assert "unsupported final-style claim" in result.stderr
 
 
 def test_phase11_validation_gate_allows_recorded_dfm_violations(tmp_path: Path) -> None:

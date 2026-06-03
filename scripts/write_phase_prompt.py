@@ -1569,6 +1569,27 @@ blockers=["validate_findings.py failed after repair attempts — see logs"].
     # END STRICT PHASE 20 VALIDATE AND REPAIR PROMPT
 
     if args.phase == 21:
+        phase21_assessment_report_instructions = ""
+        if assessment_profile in {"balanced", "engineering"}:
+            phase21_assessment_report_instructions = f"""
+
+Engineering assessment report split for profile {assessment_profile}:
+- Read the canonical Phase 18 artifact: exports/{project}-candidate-findings.json.
+- Generate and preserve exports/{project}-engineering-assessment-report-sections.json.
+- The HTML report should show these read-only sections separately from verified findings:
+  1. Verified Findings
+  2. Engineering Concerns
+  3. Blocked Verifications
+  4. Datasheet Checks Needed
+  5. Calculations Needed
+  6. Human Review Questions
+  7. Rejected / Unsupported Candidates, when useful for diagnostics
+- Engineering concerns and blocked verifications are not verified findings.
+- Do not count engineering_concern_candidates or blocked_verification_candidates as issues.
+- Do not promote "Regulator fails thermal check", "Impedance violation found", or "Routing verified"
+  into verified findings without the existing final verified-finding gates.
+- Zero verified findings is acceptable when valid concern/blocker sections are preserved separately.
+"""
         prompt += f"""
 
 Phase 21 — Generate Report instructions:
@@ -1597,6 +1618,7 @@ Required fields in the validation artifact:
 - html_report_exists
 - markdown_report_only_detected
 - overall_pass
+{phase21_assessment_report_instructions}
 
 overall_pass=true ONLY when ALL of:
 - validation_passed_before_report=true

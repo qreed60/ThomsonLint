@@ -47,6 +47,16 @@ profiles, that artifact separates `verified_finding_candidates` from
 categories are pre-final-review classifications only. Engineering concerns and
 blocked verifications are not final findings, and final gates remain strict.
 
+For report generation, `balanced` and `engineering` profiles add a minimal
+section split backed by
+`exports/<project>-engineering-assessment-report-sections.json`. The HTML report
+keeps verified findings separate from Engineering Concerns, Blocked
+Verifications, Datasheet Checks Needed, Calculations Needed, Human Review
+Questions, and diagnostic Rejected / Unsupported Candidates. Engineering
+concerns and blocked verifications are not counted as verified findings. This is
+enabled with `THOMSONLINT_ASSESSMENT_PROFILE=balanced` or
+`THOMSONLINT_ASSESSMENT_PROFILE=engineering`.
+
 For PR16-PR37, use the explicit topology_ai workflow. PR40 allows `pre01` starts from post-conversion exports:
 
 ```bash
