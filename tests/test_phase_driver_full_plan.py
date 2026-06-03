@@ -178,7 +178,30 @@ def test_failed_checkpoint_blocks_next_phase(tmp_path: Path, monkeypatch: pytest
             write_checkpoint(root, "TestProject", int(command[-2]), passed=False)
         return fake_completed(command)
 
+    def fake_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        class _FakeStdout:
+            lines = ["runner output\n"]
+            idx = 0
+            def close(self):
+                pass
+            def readline(self):
+                if self.idx < len(_FakeStdout.lines):
+                    line = _FakeStdout.lines[self.idx]
+                    self.idx += 1
+                    return line
+                return ""
+        class _FakeProc:
+            stdout = None  # type: ignore[attr-defined]
+            def wait(self):
+                write_checkpoint(root, "TestProject", 1, passed=False)
+                return 0
+            def close(self):
+                pass
+        _FakeProc.stdout = _FakeStdout()
+        return _FakeProc()
+
     monkeypatch.setattr(phase_driver.subprocess, "run", fake_run)
+    monkeypatch.setattr(phase_driver.subprocess, "Popen", fake_popen)
     out_dir = tmp_path / "run"
     result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "1", "--end", "2", "--execute", "--runner", "openhands", "--out-dir", str(out_dir)])
     assert result == 1
@@ -186,6 +209,181 @@ def test_failed_checkpoint_blocks_next_phase(tmp_path: Path, monkeypatch: pytest
     assert len(rows) == 1
     assert rows[0]["status"] == "blocked"
     assert rows[0]["blocker_id"] == "phase01_checkpoint_not_passed"
+
+
+def test_execute_runner_openhands_invokes_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """execute runner=openhands invokes the OpenHands wrapper and records runner_command."""
+    root = fake_root(tmp_path, monkeypatch)
+
+    def fake_run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        text = " ".join(command)
+        if "write_phase_prompt.py" in text:
+            out = Path(command[command.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("prompt\n", encoding="utf-8")
+        elif "ensure_phase_checkpoint.py" in text:
+            # ensure_phase_checkpoint writes the checkpoint; don't double-write
+            pass
+        return fake_completed(command)
+
+    def fake_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        class _FakeStdout:
+            lines = ["runner output\n"]
+            idx = 0
+            def close(self):
+                pass
+            def readline(self):
+                if self.idx < len(_FakeStdout.lines):
+                    line = _FakeStdout.lines[self.idx]
+                    self.idx += 1
+                    return line
+                return ""
+        class _FakeProc:
+            stdout = None  # type: ignore[attr-defined]
+            def wait(self):
+                write_checkpoint(root, "TestProject", 1, passed=True)
+                return 0
+            def close(self):
+                pass
+        _FakeProc.stdout = _FakeStdout()
+        return _FakeProc()
+
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run)
+    monkeypatch.setattr(phase_driver.subprocess, "Popen", fake_popen)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "1", "--end", "1", "--execute", "--runner", "openhands", "--out-dir", str(out_dir)])
+    assert result == 0
+
+    rows = read_json(out_dir / "full-plan-driver-stage-results.json")["stage_results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "passed"
+    runner_cmd = rows[0]["runner_command"]
+    assert any("run_openhands_phase.sh" in str(c) for c in runner_cmd)
+
+
+def test_execute_runner_none_does_not_invoke_openhands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """execute runner=none blocks immediately without invoking OpenHands."""
+    fake_root(tmp_path, monkeypatch)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "1", "--end", "1", "--execute", "--runner", "none", "--out-dir", str(out_dir)])
+    assert result == 1
+
+    rows = read_json(out_dir / "full-plan-driver-stage-results.json")["stage_results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "blocked"
+    assert rows[0]["blocker_id"] == "phase01_runner_none"
+
+
+def test_nonzero_runner_return_blocks_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """nonzero runner return code blocks the phase and stops."""
+    root = fake_root(tmp_path, monkeypatch)
+
+    def fake_run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        text = " ".join(command)
+        if "write_phase_prompt.py" in text:
+            out = Path(command[command.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("prompt\n", encoding="utf-8")
+        return fake_completed(command)
+
+    def fake_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        class _FakeStdout:
+            lines = ["runner output\n"]
+            idx = 0
+            def close(self):
+                pass
+            def readline(self):
+                if self.idx < len(_FakeStdout.lines):
+                    line = _FakeStdout.lines[self.idx]
+                    self.idx += 1
+                    return line
+                return ""
+        class _FakeProc:
+            stdout = None  # type: ignore[attr-defined]
+            def wait(self):
+                return 42
+            def close(self):
+                pass
+        _FakeProc.stdout = _FakeStdout()
+        return _FakeProc()
+
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run)
+    monkeypatch.setattr(phase_driver.subprocess, "Popen", fake_popen)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "1", "--end", "2", "--execute", "--runner", "openhands", "--out-dir", str(out_dir)])
+    assert result == 1
+
+    rows = read_json(out_dir / "full-plan-driver-stage-results.json")["stage_results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["blocker_id"] == "phase01_runner_failed"
+    assert rows[0]["return_code"] == 42
+
+
+def test_runner_command_and_log_path_recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """runner_command and phase log path are recorded in stage result."""
+    root = fake_root(tmp_path, monkeypatch)
+
+    def fake_run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        text = " ".join(command)
+        if "write_phase_prompt.py" in text:
+            out = Path(command[command.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("prompt\n", encoding="utf-8")
+        elif "ensure_phase_checkpoint.py" in text:
+            # ensure_phase_checkpoint writes the checkpoint; don't double-write
+            pass
+        return fake_completed(command)
+
+    def fake_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[str]:
+        class _FakeStdout:
+            lines = ["runner output\n"]
+            idx = 0
+            def close(self):
+                pass
+            def readline(self):
+                if self.idx < len(_FakeStdout.lines):
+                    line = _FakeStdout.lines[self.idx]
+                    self.idx += 1
+                    return line
+                return ""
+        class _FakeProc:
+            stdout = None  # type: ignore[attr-defined]
+            def wait(self):
+                write_checkpoint(root, "TestProject", 1, passed=True)
+                return 0
+            def close(self):
+                pass
+        _FakeProc.stdout = _FakeStdout()
+        return _FakeProc()
+
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run)
+    monkeypatch.setattr(phase_driver.subprocess, "Popen", fake_popen)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "1", "--end", "1", "--execute", "--runner", "openhands", "--out-dir", str(out_dir)])
+    assert result == 0
+
+    rows = read_json(out_dir / "full-plan-driver-stage-results.json")["stage_results"]
+    row = rows[0]
+    runner_cmd = row["runner_command"]
+    assert len(runner_cmd) > 0
+    assert any("run_openhands_phase.sh" in str(c) for c in runner_cmd)
+    log_path = row.get("log_preview")
+    phase_dir = Path(row["phase_output_dir"])
+    expected_log = phase_dir / "phase01-openhands.log"
+    assert expected_log.exists()
+
+
+def test_dry_run_does_not_invoke_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """dry-run still does not invoke runner."""
+    fake_root(tmp_path, monkeypatch)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "1", "--end", "1", "--dry-run", "--out-dir", str(out_dir)])
+    assert result == 0
+
+    rows = read_json(out_dir / "full-plan-driver-stage-results.json")["stage_results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "planned"
 
 
 def test_phase_boundary_guards_and_topology_subsystem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -804,6 +804,7 @@ def full_plan_stage_record(
     stderr: str = "",
     checkpoint_row_count: int = 0,
     blocker_id: str | None = None,
+    log_path: str | None = None,
 ) -> dict[str, Any]:
     return {
         "workflow": FULL_PLAN_WORKFLOW,
@@ -816,6 +817,7 @@ def full_plan_stage_record(
         "return_code": return_code,
         "stdout_preview": preview(stdout),
         "stderr_preview": preview(stderr),
+        "log_preview": preview(Path(log_path).read_text(encoding="utf-8")) if log_path else None,
         "phase_output_dir": str(phase_dir),
         "prompt_path": str(prompt_path),
         "prompt_command": prompt_command,
@@ -1159,7 +1161,58 @@ def execute_full_plan(args: argparse.Namespace) -> int:
             )
             break
 
-        completed_runner = subprocess.run(runner_command, cwd=root, text=True, capture_output=True)
+        # Stream runner output live and save per-phase log
+        phase_log_path = str(phase_dir / f"phase{phase:02d}-openhands.log")
+        log_fh = open(phase_log_path, "w", encoding="utf-8")
+        try:
+            proc = subprocess.Popen(
+                runner_command,
+                cwd=root,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception as exc:
+            blocker_id = f"phase{phase:02d}_runner_failed"
+            blockers.append(full_plan_blocker(blocker_id, phase, "phase runner failed", {"reason": str(exc)}))
+            results.append(
+                full_plan_stage_record(
+                    run_id_value=args.run_id,
+                    phase=phase,
+                    mode=mode,
+                    status="failed",
+                    reason="phase runner launch failed",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    return_code=None,
+                    stdout="",
+                    stderr=str(exc),
+                    checkpoint_row_count=len(phase_rows),
+                    blocker_id=blocker_id,
+                    log_path=phase_log_path,
+                )
+            )
+            break
+
+        runner_stdout_parts: list[str] = []
+        for line in iter(proc.stdout.readline, ""):
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            log_fh.write(line)
+            runner_stdout_parts.append(line)
+        proc.stdout.close()
+        completed_runner = subprocess.CompletedProcess(
+            runner_command,
+            proc.wait(),
+            "".join(runner_stdout_parts),
+            "",
+        )
+        log_fh.close()
+        log_fh = None
+
         checkpoint_rows = load_checkpoint_rows(checkpoint_path)
         phase_rows = checkpoint_rows_for_phase(checkpoint_rows, phase)
         if completed_runner.returncode != 0:
@@ -1179,13 +1232,59 @@ def execute_full_plan(args: argparse.Namespace) -> int:
                     validation_commands=validation_commands,
                     return_code=completed_runner.returncode,
                     stdout=completed_runner.stdout,
-                    stderr=completed_runner.stderr,
+                    stderr="",
                     checkpoint_row_count=len(phase_rows),
                     blocker_id=blocker_id,
+                    log_path=phase_log_path,
                 )
             )
             break
 
+        # Post-runner validation: ensure_phase_checkpoint.py then audit_phase.py
+        ensure_cmd = [
+            sys.executable or "python3",
+            str(root / "scripts" / "ensure_phase_checkpoint.py"),
+            "--project", args.project,
+            "--phase", str(phase),
+            "--exports", str(root / "exports"),
+            "--mode", "replace",
+        ]
+        completed_ensure = subprocess.run(ensure_cmd, cwd=root, text=True, capture_output=True)
+        if completed_ensure.returncode != 0:
+            blocker_id = f"phase{phase:02d}_checkpoint_not_passed"
+            blockers.append(
+                full_plan_blocker(
+                    blocker_id,
+                    phase,
+                    "ensure_phase_checkpoint failed",
+                    {"return_code": completed_ensure.returncode},
+                )
+            )
+            results.append(
+                full_plan_stage_record(
+                    run_id_value=args.run_id,
+                    phase=phase,
+                    mode=mode,
+                    status="blocked",
+                    reason="ensure_phase_checkpoint failed",
+                    phase_dir=phase_dir,
+                    prompt_path=prompt_path,
+                    prompt_command=prompt_command,
+                    runner_command=runner_command,
+                    validation_commands=validation_commands,
+                    return_code=completed_ensure.returncode,
+                    stdout=completed_ensure.stdout,
+                    stderr=completed_ensure.stderr,
+                    checkpoint_row_count=len(phase_rows),
+                    blocker_id=blocker_id,
+                    log_path=phase_log_path,
+                )
+            )
+            break
+
+        # Re-checkpoint after ensure_phase_checkpoint
+        checkpoint_rows = load_checkpoint_rows(checkpoint_path)
+        phase_rows = checkpoint_rows_for_phase(checkpoint_rows, phase)
         if not exactly_one_passed_checkpoint(checkpoint_rows, phase):
             blocker_id = f"phase{phase:02d}_checkpoint_not_passed"
             blockers.append(
@@ -1208,11 +1307,12 @@ def execute_full_plan(args: argparse.Namespace) -> int:
                     prompt_command=prompt_command,
                     runner_command=runner_command,
                     validation_commands=validation_commands,
-                    return_code=completed_runner.returncode,
-                    stdout=completed_runner.stdout,
-                    stderr=completed_runner.stderr,
+                    return_code=completed_ensure.returncode,
+                    stdout=completed_ensure.stdout,
+                    stderr=completed_ensure.stderr,
                     checkpoint_row_count=len(phase_rows),
                     blocker_id=blocker_id,
+                    log_path=phase_log_path,
                 )
             )
             break
@@ -1242,6 +1342,7 @@ def execute_full_plan(args: argparse.Namespace) -> int:
                 stderr=completed_audit.stderr,
                 checkpoint_row_count=len(phase_rows),
                 blocker_id=blocker_id,
+                log_path=phase_log_path,
             )
         )
         if completed_audit.returncode != 0:
