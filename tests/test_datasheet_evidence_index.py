@@ -231,6 +231,132 @@ def test_pdf_text_extraction_fallback_graceful(tmp_path: Path) -> None:
     assert read_json(out_dir / "datasheet-evidence-index.json")["documents"][0]["extraction_warnings"]
 
 
+def write_testproject_pdf_set(tmp_path: Path, *, with_manifest: bool = False) -> tuple[Path, Path]:
+    datasheets = tmp_path / ".agents_tmp" / "pre_clean_phase6_run_20260525T104621Z" / "datasheets"
+    datasheets.mkdir(parents=True)
+    for name in [
+        "032_ONSEMI_FDS4435BZ.pdf",
+        "002_Murata_GRM155R71H104KE14D.pdf",
+        "014_JST_S2B-XH-A_LF_SN.pdf",
+    ]:
+        (datasheets / name).write_text("not a real pdf", encoding="utf-8")
+    bom = tmp_path / "TestProject-bom.json"
+    bom.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "refdes": ["Q2"],
+                        "fields": {"manufacturer": "ONSEMI", "mpn": "FDS4435BZ", "description": "MOSFET"},
+                        "manufacturers": [{"manufacturer": "ONSEMI", "mpn": "FDS4435BZ", "rank": 1}],
+                        "raw_row_index": 32,
+                    },
+                    {
+                        "refdes": ["C40", "C41"],
+                        "fields": {"manufacturer": "Murata", "mpn": "GRM155R71H104KE14D", "description": "CAP"},
+                        "manufacturers": [{"manufacturer": "Murata", "mpn": "GRM155R71H104KE14D", "rank": 1}],
+                        "raw_row_index": 2,
+                    },
+                    {
+                        "refdes": ["P4"],
+                        "fields": {"manufacturer": "JST", "mpn": "S2B-XH-A (LF)(SN)", "description": "CON"},
+                        "manufacturers": [{"manufacturer": "JST", "mpn": "S2B-XH-A (LF)(SN)", "rank": 1}],
+                        "raw_row_index": 14,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    if with_manifest:
+        rows = [
+            {"bom_row_index": 32, "reference_designators": "Q2", "selected_manufacturer": "ONSEMI", "selected_mpn": "FDS4435BZ", "local_saved_path": str(datasheets / "032_ONSEMI_FDS4435BZ.pdf"), "status": "found"},
+            {"bom_row_index": 2, "reference_designators": "C40 C41", "selected_manufacturer": "Murata", "selected_mpn": "GRM155R71H104KE14D", "local_saved_path": str(datasheets / "002_Murata_GRM155R71H104KE14D.pdf"), "status": "found"},
+            {"bom_row_index": 14, "reference_designators": "P4", "selected_manufacturer": "JST", "selected_mpn": "S2B-XH-A (LF)(SN)", "local_saved_path": str(datasheets / "014_JST_S2B-XH-A_LF_SN.pdf"), "status": "found"},
+        ]
+        (datasheets / "datasheet_manifest.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    return datasheets, bom
+
+
+def test_explicit_datasheets_dir_with_pdfs_under_hidden_path_indexes_documents(tmp_path: Path) -> None:
+    datasheets, bom = write_testproject_pdf_set(tmp_path)
+    out_dir = tmp_path / "out"
+    result = run_index("--project", "TestProject", "--datasheets-dir", str(datasheets), "--bom", str(bom), "--out-dir", str(out_dir), "--text-only")
+    assert result.returncode == 0, result.stderr + result.stdout
+    index = read_json(out_dir / "datasheet-evidence-index.json")
+    assert index["summary"]["datasheet_file_count"] == 3
+    assert len(index["documents"]) == 3
+    assert {doc["filename"] for doc in index["documents"]} == {
+        "032_ONSEMI_FDS4435BZ.pdf",
+        "002_Murata_GRM155R71H104KE14D.pdf",
+        "014_JST_S2B-XH-A_LF_SN.pdf",
+    }
+
+
+def test_filename_matching_maps_testproject_mpns_to_pdfs(tmp_path: Path) -> None:
+    datasheets, bom = write_testproject_pdf_set(tmp_path)
+    out_dir = tmp_path / "out"
+    result = run_index("--project", "TestProject", "--datasheets-dir", str(datasheets), "--bom", str(bom), "--out-dir", str(out_dir), "--text-only")
+    assert result.returncode == 0, result.stderr + result.stdout
+    docs = {doc["filename"]: doc for doc in read_json(out_dir / "datasheet-evidence-index.json")["documents"]}
+    assert docs["032_ONSEMI_FDS4435BZ.pdf"]["matched_mpn"] == "FDS4435BZ"
+    assert docs["032_ONSEMI_FDS4435BZ.pdf"]["matched_refdes"] == ["Q2"]
+    assert docs["002_Murata_GRM155R71H104KE14D.pdf"]["matched_mpn"] == "GRM155R71H104KE14D"
+    assert docs["002_Murata_GRM155R71H104KE14D.pdf"]["matched_refdes"] == ["C40", "C41"]
+    assert docs["014_JST_S2B-XH-A_LF_SN.pdf"]["matched_mpn"] == "S2B-XH-A (LF)(SN)"
+    assert docs["014_JST_S2B-XH-A_LF_SN.pdf"]["matched_refdes"] == ["P4"]
+
+
+def test_datasheet_manifest_jsonl_is_parsed_when_present_but_not_required(tmp_path: Path) -> None:
+    datasheets, bom = write_testproject_pdf_set(tmp_path, with_manifest=True)
+    out_dir = tmp_path / "with_manifest"
+    result = run_index("--project", "TestProject", "--datasheets-dir", str(datasheets), "--bom", str(bom), "--out-dir", str(out_dir), "--text-only")
+    assert result.returncode == 0, result.stderr + result.stdout
+    status = read_json(out_dir / "datasheet-extraction-status.json")
+    assert status["summary"]["datasheet_manifest_row_count"] == 3
+    docs = read_json(out_dir / "datasheet-evidence-index.json")["documents"]
+    assert all(doc["matched_manifest_entry"] for doc in docs)
+
+    datasheets_without_manifest, bom_without_manifest = write_testproject_pdf_set(tmp_path / "no_manifest")
+    out_dir_without_manifest = tmp_path / "without_manifest"
+    result_without_manifest = run_index("--project", "TestProject", "--datasheets-dir", str(datasheets_without_manifest), "--bom", str(bom_without_manifest), "--out-dir", str(out_dir_without_manifest), "--text-only")
+    assert result_without_manifest.returncode == 0, result_without_manifest.stderr + result_without_manifest.stdout
+    assert read_json(out_dir_without_manifest / "datasheet-extraction-status.json")["summary"]["datasheet_manifest_row_count"] == 0
+
+
+def test_empty_datasheets_dir_still_blocks_missing_datasheets(tmp_path: Path) -> None:
+    datasheets = tmp_path / "datasheets"
+    datasheets.mkdir()
+    out_dir = tmp_path / "out"
+    result = run_index("--project", "TestProject", "--datasheets-dir", str(datasheets), "--out-dir", str(out_dir), "--strict")
+    assert result.returncode == 1
+    blockers = read_json(out_dir / "datasheet-extraction-blockers.json")["blockers"]
+    assert blockers and blockers[0]["blocker_id"] == "missing_datasheets"
+
+
+def test_no_unrelated_project_datasheets_are_auto_injected(tmp_path: Path) -> None:
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    (explicit / "032_ONSEMI_FDS4435BZ.pdf").write_text("not a real pdf", encoding="utf-8")
+    global_like = tmp_path / "exports" / "datasheets"
+    global_like.mkdir(parents=True)
+    (global_like / "002_Murata_GRM155R71H104KE14D.pdf").write_text("not a real pdf", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    result = run_index("--project", "TestProject", "--datasheets-dir", str(explicit), "--out-dir", str(out_dir), "--text-only")
+    assert result.returncode == 0, result.stderr + result.stdout
+    docs = read_json(out_dir / "datasheet-evidence-index.json")["documents"]
+    assert [doc["filename"] for doc in docs] == ["032_ONSEMI_FDS4435BZ.pdf"]
+
+
+def test_datasheet_index_safety_flags_absent_or_false(tmp_path: Path) -> None:
+    result, out_dir, _ = invoke(tmp_path)
+    assert result.returncode == 0, result.stderr + result.stdout
+    for filename in ["datasheet-evidence-index.json", "datasheet-extraction-status.json"]:
+        artifact = read_json(out_dir / filename)
+        assert artifact.get("safe_for_core_apply") in (None, False)
+        assert artifact.get("ready_for_core_apply") in (None, False)
+
+
 def test_no_shell_true_or_ai_network_imports() -> None:
     banned = {"requests", "aiohttp", "httpx", "openai", "litellm"}
     tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
@@ -287,3 +413,49 @@ def test_pr26_can_consume_datasheet_evidence_index_context(tmp_path: Path) -> No
     assert packet_result.returncode == 0, packet_result.stderr + packet_result.stdout
     context = read_json(packet_out / "packets" / "12B-001" / "context.json")
     assert any(row.get("candidate_id") for row in context["datasheet_references"])
+
+
+def test_pr26_consumes_matching_document_evidence_without_unrelated_docs(tmp_path: Path) -> None:
+    datasheets, bom = write_testproject_pdf_set(tmp_path)
+    out_dir = tmp_path / "out"
+    result = run_index("--project", "TestProject", "--datasheets-dir", str(datasheets), "--bom", str(bom), "--out-dir", str(out_dir), "--text-only")
+    assert result.returncode == 0, result.stderr + result.stdout
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "project": "TestProject",
+                "manifest_items": [
+                    {
+                        "manifest_id": "mdi_q2",
+                        "category": "branch_current_unknown",
+                        "target_type": "component",
+                        "target_id": "Q2",
+                        "refdes": "Q2",
+                        "affected_components": ["Q2"],
+                        "blocks": ["copper_calculation"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    packet_out = tmp_path / "packets"
+    packet_result = run_packet(
+        "--project",
+        "TestProject",
+        "--missing-data-manifest",
+        str(manifest),
+        "--out-dir",
+        str(packet_out),
+        "--bom",
+        str(bom),
+        "--datasheet-evidence-index",
+        str(out_dir / "datasheet-evidence-index.json"),
+    )
+    assert packet_result.returncode == 0, packet_result.stderr + packet_result.stdout
+    context = read_json(packet_out / "packets" / "12B-001" / "context.json")
+    filenames = {row.get("filename") for row in context["datasheet_references"]}
+    assert "032_ONSEMI_FDS4435BZ.pdf" in filenames
+    assert "002_Murata_GRM155R71H104KE14D.pdf" not in filenames
+    assert "014_JST_S2B-XH-A_LF_SN.pdf" not in filenames

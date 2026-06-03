@@ -8,6 +8,7 @@ import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUT_SCHEMA_PATH = ROOT / "schemas" / "calculation_input_schema.json"
+READINESS_SCHEMA_PATH = ROOT / "schemas" / "calculation_readiness_schema.json"
 RESULT_SCHEMA_PATH = ROOT / "schemas" / "calculation_result_schema.json"
 EXAMPLES_DIR = ROOT / "examples" / "calculation_examples"
 
@@ -43,9 +44,11 @@ def schema_for_example(path: Path) -> dict:
 
 def test_loads_every_json_schema() -> None:
     input_schema = load_json(INPUT_SCHEMA_PATH)
+    readiness_schema = load_json(READINESS_SCHEMA_PATH)
     result_schema = load_json(RESULT_SCHEMA_PATH)
 
     jsonschema.Draft7Validator.check_schema(input_schema)
+    jsonschema.Draft7Validator.check_schema(readiness_schema)
     jsonschema.Draft7Validator.check_schema(result_schema)
 
 

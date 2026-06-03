@@ -38,6 +38,10 @@ OUTPUTS = {
     "blockers": "ai-candidate-normalized-review-blockers.json",
 }
 
+REPORT_OUTPUTS = {
+    "summary": "ai-candidate-normalized-review-summary.txt",
+}
+
 FORBIDDEN_OUTPUT_FILENAMES = {
     "{project}-current-models-normalized.json",
     "{project}-rating-models-normalized.json",
@@ -289,6 +293,11 @@ def candidate_source(row: dict[str, Any], family: str) -> dict[str, Any]:
         "rating_id": row.get("rating_id"),
         "source_record_id": row.get("source_record_id"),
         "record_family": family,
+        "candidate_record_id": row.get("candidate_record_id"),
+        "source_pr34_operation_id": row.get("source_pr34_operation_id"),
+        "source_promotion_candidate_id": row.get("source_promotion_candidate_id"),
+        "source_approval_item_id": row.get("source_approval_item_id"),
+        "source_decision_id": row.get("source_decision_id"),
         "source_artifacts": as_list(row.get("source_artifacts")),
     }
 
@@ -315,8 +324,15 @@ def review_item(
         "core_match": core_match,
         "candidate_source": candidate_source(row, family),
         "provenance": {
+            "candidate_record_id": row.get("candidate_record_id"),
+            "source_pr34_operation_id": row.get("source_pr34_operation_id"),
+            "source_promotion_candidate_id": row.get("source_promotion_candidate_id"),
+            "source_approval_item_id": row.get("source_approval_item_id"),
+            "source_decision_id": row.get("source_decision_id"),
             "source_artifacts": as_list(row.get("source_artifacts")),
             "evidence_refs": as_list(row.get("evidence_refs")),
+            "explicit_not_branch_current_a": row.get("explicit_not_branch_current_a"),
+            "operator_preview": row.get("operator_preview") if isinstance(row.get("operator_preview"), dict) else {},
             "basis": row.get("basis"),
         },
         "ready_for_core_apply": False,
@@ -412,7 +428,7 @@ def build_outputs(
 ) -> tuple[dict[str, dict[str, Any]], int]:
     candidate_ingested_dir = candidate_ingested_dir.resolve()
     out_dir = out_dir.resolve()
-    for filename in OUTPUTS.values():
+    for filename in list(OUTPUTS.values()) + list(REPORT_OUTPUTS.values()):
         verify_output_path(out_dir / filename, out_dir, project)
 
     manifest_path = candidate_ingested_dir / INPUTS["manifest"]
@@ -451,13 +467,15 @@ def build_outputs(
     if core_current_missing:
         detail = "core current normalized artifact is missing"
         warnings.append(detail)
-        blockers.append(blocker("missing_core_current_normalized", detail))
+        if not allow_missing_core:
+            blockers.append(blocker("missing_core_current_normalized", detail))
         if strict and not allow_missing_core:
             errors.append(detail)
     if core_rating_missing:
         detail = "core rating normalized artifact is missing"
         warnings.append(detail)
-        blockers.append(blocker("missing_core_rating_normalized", detail))
+        if not allow_missing_core:
+            blockers.append(blocker("missing_core_rating_normalized", detail))
         if strict and not allow_missing_core:
             errors.append(detail)
 
@@ -517,6 +535,8 @@ def build_outputs(
         "ran_calculations": False,
         "merged_addenda": False,
         "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
+        "do_not_apply_to_core_yet": True,
         "error_count": len(errors),
         "warning_count": len(warnings),
     }
@@ -566,6 +586,7 @@ def build_outputs(
         "ran_calculations": False,
         "merged_addenda": False,
         "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
         "requires_future_core_apply_stage": True,
         "current_review_item_count": len(current_items),
         "rating_review_item_count": len(rating_items),
@@ -635,6 +656,27 @@ def build_outputs(
     }, 1 if errors else 0
 
 
+def build_summary_text(outputs: dict[str, dict[str, Any]]) -> str:
+    summary = outputs["review"].get("summary") if isinstance(outputs["review"].get("summary"), dict) else {}
+    blockers = outputs["blockers"].get("summary") if isinstance(outputs["blockers"].get("summary"), dict) else {}
+    return "\n".join([
+        "AI candidate normalized review summary",
+        f"candidate_rating_normalized_record_count={summary.get('candidate_rating_record_count', 0)}",
+        f"candidate_current_normalized_record_count={summary.get('candidate_current_record_count', 0)}",
+        f"provenance_gap_count={summary.get('provenance_gap_count', 0)}",
+        f"blocker_count={blockers.get('blocker_count', 0)}",
+        f"warning_count={summary.get('warning_count', 0)}",
+        "wrote_core_artifacts=false",
+        "wrote_core_normalized_outputs=false",
+        "safe_for_core_apply=false",
+        "ready_for_core_apply=false",
+        "ran_current_allocation=false",
+        "ran_calculations=false",
+        "do_not_apply_to_core_yet=true",
+        "",
+    ])
+
+
 def validate_outputs(outputs: list[dict[str, Any]], schema_path: Path) -> None:
     schema = load_json(schema_path)
     jsonschema.Draft7Validator.check_schema(schema)
@@ -687,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
         write_json(out_dir / OUTPUTS["rating_diff"], outputs["rating_diff"])
         write_json(out_dir / OUTPUTS["readiness"], outputs["readiness"])
         write_json(out_dir / OUTPUTS["blockers"], outputs["blockers"])
+        (out_dir / REPORT_OUTPUTS["summary"]).write_text(build_summary_text(outputs), encoding="utf-8")
         summary = outputs["review"]["summary"]
         print(
             "ai candidate normalized promotion review: "

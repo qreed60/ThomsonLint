@@ -1131,3 +1131,67 @@ Accepted source names include `<packet_id>.json`, `<packet_id>_raw_response.json
 Default topology_ai behavior remains unchanged. If no `--responses-dir` or fixture response directory is provided, the import stage is not applicable and PR27 blocks on missing raw responses. With `--responses-dir`, import runs before PR27. `--allow-partial-responses` may be used for subset validation, but missing packets must remain explicit.
 
 The importer and driver must not call AI services, require qwen_vision, fabricate response content, synthesize accepted extraction results, mutate source response files, apply candidates to core, merge addenda, or set `safe_for_core_apply` / `ready_for_core_apply` true.
+
+### PR44 Non-Empty Fixture and Explicit Approval Rules
+
+PR44 adds `tests/fixtures/topology_ai_non_empty/` for deterministic non-empty topology_ai validation. These fixtures are static, hand-authored JSON files, not live AI output. They may be used to exercise PR27 through PR37 without calling an LLM:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --allow-existing-outputs \
+  --responses-dir tests/fixtures/topology_ai_non_empty/responses
+```
+
+Normal workflow behavior must not auto-approve. Without explicit approval input, PR33 writes pending decisions and PR34 skips approved operations. To test an approved dry-run path, provide a human-authored approval artifact:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --allow-existing-outputs \
+  --responses-dir tests/fixtures/topology_ai_non_empty/responses \
+  --approval-decisions tests/fixtures/topology_ai_non_empty/approval-decisions.json
+```
+
+With `--approval-decisions`, PR33 validates the provided artifact against the PR32 approval queue and writes the validated decision/validation artifacts inside the run-local PR32 promotion directory. PR34 consumes those paths. This does not make the workflow safe for core apply. PR34+ remains dry-run/candidate-only, must not write core artifacts, must not merge addenda, and must keep `safe_for_core_apply` / `ready_for_core_apply` false.
+
+### PR45 Rating Fixture Rules
+
+PR45 adds `tests/fixtures/topology_ai_rating_non_empty/` for deterministic
+rating-model topology_ai validation. It is separate from the PR44 current-model
+fixture. The response files are static, hand-authored JSON fixtures, not live AI
+output, and may be used without calling an LLM:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --allow-existing-outputs \
+  --responses-dir tests/fixtures/topology_ai_rating_non_empty/responses
+```
+
+The fixture target is an explicit `fuse_rating` / `current_max` item for `R50`.
+Do not infer connector pins from connector-wide ratings and do not infer
+regulator input/output side in this path. Without explicit approval input, PR33
+must remain pending and PR34 must have zero approved operations.
+
+To test the approved dry-run path, provide the human-authored approval artifact:
+
+```bash
+./scripts/run_phase_driver.sh TestProject \
+  --workflow topology_ai \
+  --start pre01 \
+  --end pr37 \
+  --allow-existing-outputs \
+  --responses-dir tests/fixtures/topology_ai_rating_non_empty/responses \
+  --approval-decisions tests/fixtures/topology_ai_rating_non_empty/approval-decisions.json
+```
+
+This remains review-only. PR34+ must not write core artifacts, merge addenda,
+apply candidates to core, or set `safe_for_core_apply` /
+`ready_for_core_apply` true.

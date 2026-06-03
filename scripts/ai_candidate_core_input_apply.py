@@ -31,6 +31,11 @@ OUTPUTS = {
     "blockers": "ai-candidate-core-input-apply-blockers.json",
 }
 
+REPORT_OUTPUTS = {
+    "summary_txt": "ai-candidate-core-input-apply-summary.txt",
+    "report_md": "ai-candidate-core-input-apply-report.md",
+}
+
 FORBIDDEN_OUTPUT_FILENAMES = {
     "{project}-current-models-normalized.json",
     "{project}-rating-models-normalized.json",
@@ -166,6 +171,20 @@ def has_forbidden_true_safe_merge(value: Any) -> bool:
     return False
 
 
+def target_field_names(*values: Any) -> set[str]:
+    names: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"field_name", "field", "source_item_id", "target_field"} and child is not None:
+                    names.add(str(child))
+                names.update(target_field_names(child))
+        elif isinstance(value, list):
+            for child in value:
+                names.update(target_field_names(child))
+    return names
+
+
 def path_is_relative_to(path: Path, parent: Path) -> bool:
     try:
         path.resolve().relative_to(parent.resolve())
@@ -229,6 +248,13 @@ def operation_evidence(operation: dict[str, Any]) -> list[Any]:
     approval = operation.get("approval")
     if isinstance(approval, dict) and isinstance(approval.get("evidence_refs"), list):
         return approval["evidence_refs"]
+    operator_preview = operation.get("operator_preview")
+    if isinstance(operator_preview, dict):
+        evidence_ref = operator_preview.get("evidence_ref")
+        if isinstance(evidence_ref, list):
+            return evidence_ref
+        if isinstance(evidence_ref, str) and evidence_ref.strip():
+            return [evidence_ref]
     return []
 
 
@@ -249,6 +275,12 @@ def candidate_record(operation: dict[str, Any], record_type: str) -> dict[str, A
         "target_identity": target_identity,
         "candidate_value": candidate_value,
         "approval": operation.get("approval") if isinstance(operation.get("approval"), dict) else {},
+        "operator_preview": operation.get("operator_preview") if isinstance(operation.get("operator_preview"), dict) else {},
+        "explicit_not_branch_current_a": (
+            bool(operation.get("operator_preview", {}).get("not_branch_current_a"))
+            if isinstance(operation.get("operator_preview"), dict)
+            else False
+        ),
         "pr34_operation": {
             "dry_run_operation": operation.get("dry_run_operation"),
             "operation_status": operation.get("operation_status"),
@@ -334,6 +366,9 @@ def build_outputs(
         elif not evidence_refs:
             reason = "missing_evidence"
             eligible = False
+        elif candidate_kind == "rating_model" and "branch_current_a" in target_field_names(target_identity, candidate_value):
+            reason = "attempted_core_write_blocked"
+            eligible = False
         elif candidate_kind not in {"current_model", "rating_model", *ADDENDA_KIND_TO_KEY.keys()}:
             reason = "unsupported_candidate_kind"
             eligible = False
@@ -410,6 +445,8 @@ def build_outputs(
         "ran_calculations": False,
         "merged_addenda": False,
         "safe_for_core_apply": False,
+        "requires_future_core_apply_stage": True,
+        "do_not_apply_to_core_yet": True,
         "error_count": len(errors),
         "warning_count": len(warnings),
     }
@@ -551,6 +588,74 @@ def build_outputs(
     }
 
 
+def value_text(record: dict[str, Any]) -> str:
+    value = record.get("candidate_value") if isinstance(record.get("candidate_value"), dict) else {}
+    for key in ("current_max", "rating_a", "current_a", "value", "max_current_a", "normalized_value"):
+        if key in value:
+            unit = value.get("unit") or value.get("normalized_unit") or value.get("units")
+            return f"{value[key]} {unit}".strip()
+    return json.dumps(json_safe(value), sort_keys=True)
+
+
+def build_report(outputs: dict[str, dict[str, Any]]) -> tuple[str, str]:
+    manifest = outputs["manifest"]
+    summary = manifest.get("summary") if isinstance(manifest.get("summary"), dict) else {}
+    rating_records = as_list(outputs["rating_input"].get("rating_model_inputs"))
+    current_records = as_list(outputs["current_input"].get("current_model_inputs"))
+    candidate_rating_records = [row for row in rating_records if isinstance(row, dict) and row.get("candidate_input") is True]
+    candidate_current_records = [row for row in current_records if isinstance(row, dict) and row.get("candidate_input") is True]
+    summary_lines = [
+        "AI candidate core input apply summary",
+        f"candidate_apply_operation_count={summary.get('candidate_apply_operation_count', 0)}",
+        f"rating_model_records_added={summary.get('rating_model_records_added', 0)}",
+        f"current_model_records_added={summary.get('current_model_records_added', 0)}",
+        f"blocked_operation_count={summary.get('blocked_operation_count', 0)}",
+        "wrote_core_artifacts=false",
+        "wrote_normalized_outputs=false",
+        "safe_for_core_apply=false",
+        "requires_future_core_apply_stage=true",
+        "do_not_apply_to_core_yet=true",
+        "",
+    ]
+    md_lines = [
+        "# AI Candidate Core Input Apply Report",
+        "",
+        "Status: isolated candidate inputs only. Do not apply to core yet.",
+        "",
+        "## Summary",
+        "",
+    ]
+    md_lines.extend(f"- {line}" for line in summary_lines[1:-1])
+    md_lines.extend(["", "## Rating Records", ""])
+    if candidate_rating_records:
+        for record in sorted(candidate_rating_records, key=lambda row: sort_key(row.get("source_pr34_operation_id"))):
+            target = record.get("target_identity") if isinstance(record.get("target_identity"), dict) else {}
+            preview = record.get("operator_preview") if isinstance(record.get("operator_preview"), dict) else {}
+            md_lines.extend([
+                f"### {target.get('refdes') or record.get('source_approval_item_id')}",
+                "",
+                f"- value: {value_text(record)}",
+                f"- source_approval_item_id: {record.get('source_approval_item_id')}",
+                f"- source_promotion_candidate_id: {record.get('source_promotion_candidate_id')}",
+                f"- source_pr34_operation_id: {record.get('source_pr34_operation_id')}",
+                f"- evidence_ref: {'; '.join(str(ref) for ref in as_list(record.get('evidence_refs')))}",
+                f"- target_identity: {json.dumps(json_safe(target), sort_keys=True)}",
+                f"- explicit_note: {preview.get('explicit_note') or 'rating/load-switch current_max only; not branch_current_a'}",
+                f"- not_branch_current_a: {str(record.get('explicit_not_branch_current_a')).lower()}",
+                "",
+            ])
+    else:
+        md_lines.extend(["No candidate rating records were written.", ""])
+    md_lines.extend(["## Current Records", ""])
+    if candidate_current_records:
+        for record in sorted(candidate_current_records, key=lambda row: sort_key(row.get("source_pr34_operation_id"))):
+            md_lines.append(f"- {record.get('source_pr34_operation_id')}: {value_text(record)}")
+    else:
+        md_lines.append("- current_model_records_added=0")
+    md_lines.append("")
+    return "\n".join(summary_lines), "\n".join(md_lines)
+
+
 def validate_outputs(outputs: list[dict[str, Any]], schema_path: Path) -> None:
     schema = load_json(schema_path)
     jsonschema.Draft7Validator.check_schema(schema)
@@ -590,7 +695,7 @@ def main(argv: list[str] | None = None) -> int:
         if not status_path.exists():
             raise FileNotFoundError("missing_dry_run_status")
         out_dir = Path(args.out_dir).resolve()
-        for filename in OUTPUTS.values():
+        for filename in list(OUTPUTS.values()) + list(REPORT_OUTPUTS.values()):
             verify_output_path(out_dir / filename, out_dir, args.project)
 
         try:
@@ -616,6 +721,9 @@ def main(argv: list[str] | None = None) -> int:
         validate_outputs(list(outputs.values()), Path(args.schema).resolve())
         for key, filename in OUTPUTS.items():
             write_json(out_dir / filename, outputs[key])
+        summary_txt, report_md = build_report(outputs)
+        (out_dir / REPORT_OUTPUTS["summary_txt"]).write_text(summary_txt, encoding="utf-8")
+        (out_dir / REPORT_OUTPUTS["report_md"]).write_text(report_md, encoding="utf-8")
     except (OSError, json.JSONDecodeError, ValueError, jsonschema.ValidationError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

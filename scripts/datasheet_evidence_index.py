@@ -122,6 +122,49 @@ def parse_refdes(value: Any) -> list[str]:
     return [token for token in re.split(r"[\s,;]+", str(value).strip()) if token]
 
 
+def manifest_rows(datasheets_dir: Path) -> list[dict[str, Any]]:
+    path = datasheets_dir / "datasheet_manifest.jsonl"
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line_no, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            rows.append({"manifest_line": line_no, "parse_error": "invalid JSONL row"})
+            continue
+        if not isinstance(row, dict):
+            continue
+        row["manifest_line"] = line_no
+        rows.append(row)
+    return rows
+
+
+def parse_manifest_refdes(row: dict[str, Any]) -> list[str]:
+    refs = row.get("reference_designators")
+    if refs is None and isinstance(row.get("raw_bom_fields"), dict):
+        refs = row["raw_bom_fields"].get("REF DES")
+    return parse_refdes(refs)
+
+
+def compact_manifest_match(row: dict[str, Any], path: Path) -> dict[str, Any]:
+    return {
+        "manifest_line": row.get("manifest_line"),
+        "bom_row_index": row.get("bom_row_index"),
+        "status": row.get("status"),
+        "selected_mpn": row.get("selected_mpn"),
+        "selected_manufacturer": row.get("selected_manufacturer"),
+        "reference_designators": parse_manifest_refdes(row),
+        "description": row.get("description"),
+        "local_saved_path": row.get("local_saved_path"),
+        "matched_filename": path.name,
+        "mpn_text_verified": row.get("mpn_text_verified"),
+        "approved_equivalent_or_family_match": row.get("approved_equivalent_or_family_match"),
+    }
+
+
 def bom_rows(path: Path | None) -> list[dict[str, Any]]:
     if path is None or not path.exists():
         return []
@@ -142,7 +185,7 @@ def bom_rows(path: Path | None) -> list[dict[str, Any]]:
     for idx, row in enumerate(rows, 1):
         if not isinstance(row, dict):
             continue
-        mpn = first_field(row, {"mpn", "manufacturerpartnumber", "manufacturerpart", "partnumber", "mfgpn1", "value"})
+        mpn = first_field(row, {"mpn", "manufacturerpartnumber", "manufacturerpart", "partnumber", "mfgpn1", "mfgpn"})
         manufacturer = first_field(row, {"manufacturer", "mfr", "vendor", "mfg1"})
         refdes = first_field(row, {"refdes", "designator", "reference", "references"})
         manufacturers = row.get("manufacturers")
@@ -162,7 +205,27 @@ def bom_rows(path: Path | None) -> list[dict[str, Any]]:
     return parsed
 
 
+def matching_manifest_entry(path: Path, manifests: list[dict[str, Any]]) -> dict[str, Any] | None:
+    file_norm = norm(path.name)
+    for row in manifests:
+        if row.get("parse_error"):
+            continue
+        saved = row.get("local_saved_path") or row.get("local_saved_filename")
+        if saved and Path(str(saved)).name == path.name:
+            return compact_manifest_match(row, path)
+        for token in [row.get("selected_mpn"), row.get("approved_equivalent_or_family_match"), *(row.get("mpn_candidates") or [])]:
+            normalized = norm(token)
+            if normalized and normalized in file_norm:
+                return compact_manifest_match(row, path)
+    return None
+
+
 def matching_bom_entry(path: Path, pages: list[dict[str, Any]], bom: list[dict[str, Any]]) -> dict[str, Any] | None:
+    filename_haystack = norm(path.stem)
+    for row in bom:
+        normalized = row.get("normalized_mpn")
+        if normalized and normalized in filename_haystack:
+            return row
     haystack = norm(path.stem + " " + " ".join(page["text"][:500] for page in pages))
     for row in bom:
         normalized = row.get("normalized_mpn")
@@ -445,6 +508,7 @@ def build_outputs(
     warnings: list[str] = []
     blockers: list[dict[str, Any]] = []
     bom = bom_rows(bom_path)
+    manifests = manifest_rows(datasheets_dir)
     part_info_index = load_json(part_info_index_path) if part_info_index_path and part_info_index_path.exists() else None
     missing_data_manifest = load_json(missing_data_manifest_path) if missing_data_manifest_path and missing_data_manifest_path.exists() else None
     if part_info_index_path and not part_info_index_path.exists():
@@ -453,8 +517,6 @@ def build_outputs(
         warnings.append(f"optional missing-data-manifest missing: {missing_data_manifest_path}")
 
     files = collect_datasheet_files(datasheets_dir)
-    if text_only:
-        files = [path for path in files if path.suffix.lower() in TEXT_SUFFIXES]
     if not files:
         blockers.append({"blocker_id": "missing_datasheets", "reason": "no supported local datasheet files found", "path": str(datasheets_dir)})
 
@@ -467,22 +529,33 @@ def build_outputs(
         if (before_stat.st_mtime_ns, before_stat.st_size) != (after_stat.st_mtime_ns, after_stat.st_size):
             blockers.append({"blocker_id": f"source_mutated_{safe_id(path.name)}", "reason": "source datasheet changed during extraction", "path": str(path)})
         bom_entry = matching_bom_entry(path, pages, bom)
+        manifest_entry = matching_manifest_entry(path, manifests)
+        if manifest_entry and manifest_entry.get("selected_mpn"):
+            normalized_manifest_mpn = norm(manifest_entry.get("selected_mpn"))
+            bom_entry = next((row for row in bom if row.get("normalized_mpn") == normalized_manifest_mpn), bom_entry)
         blocks = page_blocks(path, pages)
         sections = section_candidates(pages)
         candidates = extract_candidates_for_pages(path, pages, bom_entry)
         all_candidates.extend(candidates)
         documents.append(
             {
+                "document_id": f"doc_{safe_id(path.stem)}",
                 "source_file": str(path),
+                "filename": path.name,
                 "file_sha256": sha256_file(path),
                 "page_count": page_count,
                 "extracted_text_available": bool(pages),
+                "text_extraction_status": "extracted" if pages else "warning",
                 "extracted_tables_available": False if not include_tables else False,
                 "extraction_warnings": file_warnings,
                 "page_evidence_blocks": blocks,
                 "section_candidates": sections,
                 "candidate_count": len(candidates),
+                "matched_mpn": bom_entry.get("mpn") if bom_entry else manifest_entry.get("selected_mpn") if manifest_entry else None,
+                "matched_manufacturer": bom_entry.get("manufacturer") if bom_entry else manifest_entry.get("selected_manufacturer") if manifest_entry else None,
+                "matched_refdes": bom_entry.get("refdes") if bom_entry else manifest_entry.get("reference_designators") if manifest_entry else [],
                 "matched_bom_entry": bom_entry,
+                "matched_manifest_entry": manifest_entry,
             }
         )
         warnings.extend(f"{path.name}: {warning}" for warning in file_warnings)
@@ -495,6 +568,7 @@ def build_outputs(
         "bom": str(bom_path) if bom_path else None,
         "part_info_index": str(part_info_index_path) if part_info_index_path else None,
         "missing_data_manifest": str(missing_data_manifest_path) if missing_data_manifest_path else None,
+        "datasheet_manifest_jsonl": str(datasheets_dir / "datasheet_manifest.jsonl") if (datasheets_dir / "datasheet_manifest.jsonl").exists() else None,
     }
     index = {
         "artifact_type": "datasheet_evidence_index",
@@ -547,6 +621,7 @@ def build_outputs(
             "warning_count": len(warnings),
             "part_info_index_loaded": isinstance(part_info_index, dict),
             "missing_data_manifest_loaded": isinstance(missing_data_manifest, dict),
+            "datasheet_manifest_row_count": len(manifests),
         },
         "execution_pass": not blockers,
         "warnings": warnings,

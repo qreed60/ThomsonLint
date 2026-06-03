@@ -27,6 +27,12 @@ OUTPUTS = {
     "blockers": "ai-promotion-apply-blockers.json",
 }
 
+REPORT_OUTPUTS = {
+    "report_json": "ai-approved-apply-preview-report.json",
+    "report_md": "ai-approved-apply-preview-report.md",
+    "summary_txt": "ai-approved-apply-preview-summary.txt",
+}
+
 FORBIDDEN_OUTPUT_FILENAMES = {
     "{project}-current-models-normalized.json",
     "{project}-rating-models-normalized.json",
@@ -237,6 +243,79 @@ def blocker(
     }
 
 
+def contains_true_flag(value: Any, flag_name: str) -> bool:
+    if isinstance(value, dict):
+        return any((key == flag_name and child is True) or contains_true_flag(child, flag_name) for key, child in value.items())
+    if isinstance(value, list):
+        return any(contains_true_flag(child, flag_name) for child in value)
+    return False
+
+
+def target_field_names(*values: Any) -> set[str]:
+    names: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"field_name", "field", "source_item_id", "target_field"} and child is not None:
+                    names.add(str(child))
+                names.update(target_field_names(child))
+        elif isinstance(value, list):
+            for child in value:
+                names.update(target_field_names(child))
+    return names
+
+
+def operation_target_text(target_identity: dict[str, Any], candidate_value: dict[str, Any]) -> str:
+    component = target_identity.get("refdes") or target_identity.get("component_ref") or target_identity.get("component") or target_identity.get("connector_ref")
+    target_type = target_identity.get("target_type") or target_identity.get("model_type") or ""
+    field = target_identity.get("field_name") or target_identity.get("field") or target_identity.get("source_item_id")
+    if field is None:
+        for key in ("current_max", "rating_a", "current_a", "value"):
+            if key in candidate_value:
+                field = key
+                break
+    parts = [str(p) for p in (target_type, component, field) if p]
+    return " ".join(parts) if parts else "unknown target"
+
+
+def operation_value_text(candidate_value: dict[str, Any]) -> str:
+    for key in ("current_max", "rating_a", "current_a", "value", "max_current_a"):
+        if key in candidate_value:
+            unit = candidate_value.get("unit") or candidate_value.get("units")
+            return f"{candidate_value[key]} {unit}".strip()
+    return json.dumps(json_safe(candidate_value), sort_keys=True)
+
+
+def evidence_text(candidate: dict[str, Any]) -> str:
+    refs = as_list(candidate.get("evidence_refs"))
+    if refs:
+        return "; ".join(str(ref) for ref in refs)
+    return ""
+
+
+def operation_evidence_refs(candidate: dict[str, Any], queue_item: dict[str, Any], decision: dict[str, Any]) -> list[Any]:
+    refs: list[Any] = []
+    for source in (candidate, queue_item, decision):
+        if not isinstance(source, dict):
+            continue
+        for key in ("evidence_refs", "source_evidence_refs"):
+            for ref in as_list(source.get(key)):
+                if ref not in refs:
+                    refs.append(ref)
+    return refs
+
+
+def candidate_kind_text(candidate: dict[str, Any]) -> str:
+    kind = str(candidate.get("candidate_kind") or "")
+    target_identity = candidate.get("target_identity") if isinstance(candidate.get("target_identity"), dict) else {}
+    target_type = str(target_identity.get("target_type") or target_identity.get("model_type") or "")
+    if kind == "rating_model" and "load" in target_type and "switch" in target_type:
+        return "rating/load-switch rating"
+    if kind == "rating_model":
+        return "rating"
+    return kind
+
+
 def approved_blocker_reason(reason_code: str) -> bool:
     return reason_code not in {"decision_not_approved"}
 
@@ -320,6 +399,9 @@ def build_outputs(
         if queue_item is None:
             blockers.append(blocker("approval_queue_mismatch", aid, did, pid_text, f"unknown approval_item_id={aid}"))
             continue
+        if queue_item.get("safe_to_apply_automatically") is True:
+            blockers.append(blocker("invalid_decision", aid, did, pid_text, "queue item safe_to_apply_automatically true is invalid for Phase 11C"))
+            continue
         if pid_text != str(queue_item.get("promotion_candidate_id")):
             blockers.append(blocker("approval_queue_mismatch", aid, did, pid_text, f"decision promotion_candidate_id does not match queue item for {aid}"))
             continue
@@ -352,6 +434,12 @@ def build_outputs(
         if candidate is None:
             blockers.append(blocker("promotion_candidate_missing", aid, did, pid_text, f"unknown promotion_candidate_id={pid_text}"))
             continue
+        if contains_true_flag(candidate, "writes_core_artifact"):
+            blockers.append(blocker("attempted_core_write_blocked", aid, did, pid_text, "candidate contains writes_core_artifact=true"))
+            continue
+        if contains_true_flag(decision, "writes_core_artifact"):
+            blockers.append(blocker("attempted_core_write_blocked", aid, did, pid_text, "decision contains writes_core_artifact=true"))
+            continue
 
         candidate_kind = str(candidate.get("candidate_kind") or "")
         target_identity = candidate.get("target_identity") if isinstance(candidate.get("target_identity"), dict) else {}
@@ -363,6 +451,9 @@ def build_outputs(
             continue
         if not evidence_refs:
             blockers.append(blocker("missing_evidence", aid, did, pid_text, "candidate has no evidence_refs"))
+            continue
+        if candidate_kind == "rating_model" and "branch_current_a" in target_field_names(target_identity, candidate_value):
+            blockers.append(blocker("attempted_core_write_blocked", aid, did, pid_text, "rating candidate must not target branch_current_a"))
             continue
 
         op_blockers: list[str] = []
@@ -408,6 +499,7 @@ def build_outputs(
             "requires_future_apply_stage": True,
             "target_identity": target_identity,
             "candidate_value": candidate_value,
+            "evidence_refs": operation_evidence_refs(candidate, queue_item, decision),
             "core_match": {"match_status": match_status, "matched_core_record_ids": as_list(core_match.get("matched_core_record_ids"))},
             "approval": {
                 "decision": "approved",
@@ -420,6 +512,15 @@ def build_outputs(
                 "future_core_artifact": candidate_kind in {"current_model", "rating_model"},
                 "target_identity": target_identity,
                 "candidate_value": candidate_value,
+            },
+            "operator_preview": {
+                "target": operation_target_text(target_identity, candidate_value),
+                "value": operation_value_text(candidate_value),
+                "candidate_kind": candidate_kind_text(candidate),
+                "intended_operation": dry_run_operation,
+                "evidence_ref": evidence_text(candidate),
+                "not_branch_current_a": candidate_kind == "rating_model",
+                "explicit_note": "rating only; not branch_current_a" if candidate_kind == "rating_model" else "preview only",
             },
             "blockers": op_blockers,
             "warnings": op_warnings,
@@ -508,7 +609,12 @@ def build_outputs(
         "ran_ingestion": False,
         "ran_current_allocation": False,
         "ran_calculations": False,
+        "ran_post_promotion_calculations": False,
         "merged_addenda": False,
+        "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
+        "requires_future_apply_stage": True,
+        "do_not_apply_yet": True,
         "error_count": len(errors),
         "warning_count": len(warnings),
     }
@@ -548,9 +654,13 @@ def build_outputs(
         "ran_ingestion": False,
         "ran_current_allocation": False,
         "ran_calculations": False,
+        "ran_post_promotion_calculations": False,
         "merged_addenda": False,
+        "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
         "safe_to_apply_in_pr34": False,
         "requires_future_apply_stage": True,
+        "do_not_apply_yet": True,
         "approved_decision_count": approved_count,
         "dry_run_operation_count": len(operations),
         "blocked_operation_count": blocked_operation_count,
@@ -598,6 +708,124 @@ def build_outputs(
     }
 
 
+def build_report(outputs: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], str, str]:
+    dry_run = outputs["dry_run"]
+    status = outputs["status"]
+    blockers = outputs["blockers"]
+    summary = dry_run.get("summary", {})
+    operations = as_list(dry_run.get("dry_run_operations"))
+    blocker_records = as_list(blockers.get("blocker_records"))
+    report_operations = []
+    for op in operations:
+        if not isinstance(op, dict):
+            continue
+        preview = op.get("operator_preview") if isinstance(op.get("operator_preview"), dict) else {}
+        report_operations.append({
+            "approval_item_id": op.get("approval_item_id"),
+            "promotion_candidate_id": op.get("promotion_candidate_id"),
+            "target": preview.get("target"),
+            "value": preview.get("value"),
+            "candidate_kind": preview.get("candidate_kind"),
+            "intended_operation": preview.get("intended_operation") or op.get("dry_run_operation"),
+            "evidence_ref": preview.get("evidence_ref"),
+            "not_branch_current_a": preview.get("not_branch_current_a"),
+            "explicit_note": preview.get("explicit_note"),
+            "blockers": as_list(op.get("blockers")),
+            "warnings": as_list(op.get("warnings")),
+        })
+    report_summary = {
+        "approved_decision_count": summary.get("approved_decision_count", 0),
+        "dry_run_operation_count": summary.get("dry_run_operation_count", 0),
+        "would_add_count": summary.get("would_add_count", 0),
+        "would_skip_duplicate_count": summary.get("would_skip_duplicate_count", 0),
+        "would_block_conflict_count": summary.get("would_block_conflict_count", 0),
+        "blocker_count": len(blocker_records),
+        "wrote_core_artifacts": False,
+        "safe_for_core_apply": False,
+        "ready_for_core_apply": False,
+        "requires_future_apply_stage": True,
+        "ran_current_allocation": False,
+        "ran_post_promotion_calculations": False,
+        "do_not_apply_yet": True,
+    }
+    report = {
+        "project": dry_run.get("project"),
+        "generated_at_utc": dry_run.get("generated_at_utc"),
+        "schema_version": "ai_approved_apply_preview_report_v1",
+        "dry_run_only": True,
+        "source_decisions": dry_run.get("source_decisions"),
+        "source_decision_validation": dry_run.get("source_decision_validation"),
+        "status": status.get("status"),
+        "summary": report_summary,
+        "operations": report_operations,
+        "blockers": blocker_records,
+        "safety": {
+            "wrote_core_artifacts": False,
+            "safe_for_core_apply": False,
+            "ready_for_core_apply": False,
+            "requires_future_apply_stage": True,
+            "ran_current_allocation": False,
+            "ran_post_promotion_calculations": False,
+            "no_allocation_or_calculation_reruns": True,
+            "do_not_apply_yet": True,
+        },
+    }
+    summary_lines = [
+        "AI approved apply preview summary",
+        f"approved_decision_count={report_summary['approved_decision_count']}",
+        f"dry_run_operation_count={report_summary['dry_run_operation_count']}",
+        f"would_add_count={report_summary['would_add_count']}",
+        f"would_skip_duplicate_count={report_summary['would_skip_duplicate_count']}",
+        f"would_block_conflict_count={report_summary['would_block_conflict_count']}",
+        f"blocker_count={report_summary['blocker_count']}",
+        "wrote_core_artifacts=false",
+        "safe_for_core_apply=false",
+        "ready_for_core_apply=false",
+        "requires_future_apply_stage=true",
+        "ran_current_allocation=false",
+        "ran_post_promotion_calculations=false",
+        "no allocation/calculation reruns",
+        "do_not_apply_yet=true",
+        "",
+    ]
+    md_lines = [
+        "# AI Approved Apply Preview Report",
+        "",
+        "Status: preview-only. Do not apply yet.",
+        "",
+        "## Summary",
+        "",
+    ]
+    md_lines.extend(f"- {line}" for line in summary_lines[1:-1])
+    md_lines.extend(["", "## Operations", ""])
+    if report_operations:
+        for op in report_operations:
+            md_lines.extend([
+                f"### {op.get('approval_item_id')}",
+                "",
+                f"- promotion_candidate_id: {op.get('promotion_candidate_id')}",
+                f"- target: {op.get('target')}",
+                f"- value: {op.get('value')}",
+                f"- candidate_kind: {op.get('candidate_kind')}",
+                f"- intended_operation: {op.get('intended_operation')}",
+                f"- evidence_ref: {op.get('evidence_ref')}",
+                f"- explicit_note: {op.get('explicit_note')}",
+                f"- not_branch_current_a: {str(op.get('not_branch_current_a')).lower()}",
+                "",
+            ])
+    else:
+        md_lines.extend(["No approved operations were previewed.", ""])
+    md_lines.extend(["## Blockers", ""])
+    if blocker_records:
+        for row in blocker_records:
+            if isinstance(row, dict):
+                md_lines.append(f"- {row.get('reason_code')}: {row.get('approval_item_id')} {row.get('promotion_candidate_id')} - {row.get('details')}")
+    else:
+        md_lines.append("- blocker_count=0")
+    md_lines.append("")
+    return report, "\n".join(md_lines), "\n".join(summary_lines)
+
+
 def validate_outputs(outputs: list[dict[str, Any]], schema_path: Path) -> None:
     schema = load_json(schema_path)
     jsonschema.Draft7Validator.check_schema(schema)
@@ -633,7 +861,7 @@ def main(argv: list[str] | None = None) -> int:
         decisions_path = Path(args.decisions).resolve()
         validation_path = Path(args.decision_validation).resolve()
         out_dir = Path(args.out_dir).resolve()
-        for filename in OUTPUTS.values():
+        for filename in list(OUTPUTS.values()) + list(REPORT_OUTPUTS.values()):
             verify_output_path(out_dir / filename, out_dir, args.project)
 
         plan_data = require_json_object(promotion_dir / "ai-candidate-promotion-plan.json", "promotion plan")
@@ -664,6 +892,10 @@ def main(argv: list[str] | None = None) -> int:
         validate_outputs(list(outputs.values()), Path(args.schema).resolve())
         for key, filename in OUTPUTS.items():
             write_json(out_dir / filename, outputs[key])
+        report_json, report_md, summary_txt = build_report(outputs)
+        write_json(out_dir / REPORT_OUTPUTS["report_json"], report_json)
+        (out_dir / REPORT_OUTPUTS["report_md"]).write_text(report_md, encoding="utf-8")
+        (out_dir / REPORT_OUTPUTS["summary_txt"]).write_text(summary_txt, encoding="utf-8")
     except (OSError, json.JSONDecodeError, ValueError, jsonschema.ValidationError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

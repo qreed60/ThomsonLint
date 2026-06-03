@@ -21,7 +21,9 @@ OUTPUT_NAMES = {
     "ai-candidate-rating-normalized-diff.json",
     "ai-candidate-normalized-approval-readiness.json",
     "ai-candidate-normalized-review-blockers.json",
+    "ai-candidate-normalized-review-summary.txt",
 }
+JSON_OUTPUT_NAMES = OUTPUT_NAMES - {"ai-candidate-normalized-review-summary.txt"}
 FORBIDDEN_KEYS = {
     "finding_id",
     "issue_id",
@@ -110,6 +112,11 @@ def current_record(**overrides: Any) -> dict[str, Any]:
 
 def rating_record(**overrides: Any) -> dict[str, Any]:
     record = {
+        "candidate_record_id": "candidate_rating_001",
+        "source_pr34_operation_id": "op_rating",
+        "source_promotion_candidate_id": "pc_rating",
+        "source_approval_item_id": "aq_rating",
+        "source_decision_id": "decision_rating",
         "rating_id": "rating_connector_j1_unknown_current_max_000001",
         "source_record_id": "cur_rating_connector_j1_unknown_000001",
         "target_type": "connector",
@@ -125,6 +132,7 @@ def rating_record(**overrides: Any) -> dict[str, Any]:
         "unit": "A",
         "basis": "ai_candidate_core_input_apply",
         "evidence_refs": ["datasheets/J1.pdf:14"],
+        "explicit_not_branch_current_a": True,
         "source_artifacts": [{"artifact_type": "current_model", "path": "candidate-rating-input.json", "record_id": "source_record_000001"}],
         "provenance": {"original_value": 3.0, "original_unit": "A", "normalized_unit": "A"},
     }
@@ -220,12 +228,12 @@ def test_failed_pr36_status_blocks_in_strict_mode(tmp_path: Path) -> None:
 
 
 def test_output_shape_status_json_safety_and_schema(tmp_path: Path) -> None:
-    fixtures(tmp_path)
+    fixtures(tmp_path, provenance_gaps=[])
     result = run_review(tmp_path, "--allow-missing-core")
     assert result.returncode == 0, result.stderr + result.stdout
     assert {path.name for path in out_dir(tmp_path).iterdir()} == OUTPUT_NAMES
     schema = read_json(SCHEMA)
-    for name in OUTPUT_NAMES:
+    for name in JSON_OUTPUT_NAMES:
         artifact = output(tmp_path, name)
         jsonschema.validate(instance=artifact, schema=schema)
         assert not any(isinstance(value, float) and not math.isfinite(value) for value in all_values(artifact))
@@ -275,15 +283,73 @@ def test_missing_identity_value_and_unit_are_blocked(tmp_path: Path) -> None:
 
 
 def test_missing_core_handling_allow_and_strict(tmp_path: Path) -> None:
-    fixtures(tmp_path)
+    fixtures(tmp_path, provenance_gaps=[])
     assert run_review(tmp_path, "--allow-missing-core").returncode == 0
     assert "add_candidate" in classifications(tmp_path)
     blockers = output(tmp_path, "ai-candidate-normalized-review-blockers.json")["blocker_records"]
-    assert {"missing_core_current_normalized", "missing_core_rating_normalized"}.issubset({row["reason_code"] for row in blockers})
-    fixtures(tmp_path)
+    assert {"missing_core_current_normalized", "missing_core_rating_normalized"}.isdisjoint({row["reason_code"] for row in blockers})
+    assert {"core current normalized artifact is missing", "core rating normalized artifact is missing"}.issubset(set(output(tmp_path, "ai-candidate-normalized-promotion-status.json")["warnings"]))
+    fixtures(tmp_path, provenance_gaps=[])
     assert run_review(tmp_path, "--strict").returncode == 1
     status = output(tmp_path, "ai-candidate-normalized-promotion-status.json")
     assert status["status"] == "review_failed"
+    blockers = output(tmp_path, "ai-candidate-normalized-review-blockers.json")["blocker_records"]
+    assert {"missing_core_current_normalized", "missing_core_rating_normalized"}.issubset({row["reason_code"] for row in blockers})
+
+
+def test_q1_q2_review_ready_items_preserve_candidate_provenance(tmp_path: Path) -> None:
+    q1 = rating_record(
+        candidate_record_id="candidate_q1",
+        source_pr34_operation_id="op_33ac928966d3",
+        source_promotion_candidate_id="promo_rating_model_c6924c781f53",
+        source_approval_item_id="approve_9c4366f44e61",
+        source_decision_id="decision_7a903398d9e8",
+        rating_id="rating_load_switch_q1_unknown_current_max_000001",
+        source_record_id="cur_rating_load_switch_q1_unknown_000001",
+        target_type="load_switch",
+        normalized_target_type="load_switch",
+        refdes="Q1",
+        value_a=0.2,
+        original_value=0.2,
+        evidence_refs=["BSS138W page 1"],
+    )
+    q2 = rating_record(
+        candidate_record_id="candidate_q2",
+        source_pr34_operation_id="op_cde90c46cbb4",
+        source_promotion_candidate_id="promo_rating_model_457260c0879c",
+        source_approval_item_id="approve_1179c269a25b",
+        source_decision_id="decision_5b0836a84c7d",
+        rating_id="rating_load_switch_q2_unknown_current_max_000002",
+        source_record_id="cur_rating_load_switch_q2_unknown_000002",
+        target_type="load_switch",
+        normalized_target_type="load_switch",
+        refdes="Q2",
+        value_a=8.8,
+        original_value=8.8,
+        evidence_refs=["FDS4435BZ page 1"],
+    )
+    fixtures(tmp_path, current_records=[], rating_records=[q1, q2], provenance_gaps=[])
+    assert run_review(tmp_path, "--allow-missing-core", "--strict").returncode == 0
+    readiness = output(tmp_path, "ai-candidate-normalized-approval-readiness.json")
+    blockers = output(tmp_path, "ai-candidate-normalized-review-blockers.json")["blocker_records"]
+    assert blockers == []
+    assert len(readiness["review_ready_items"]) == 2
+    assert readiness["ready_for_core_apply"] is False
+    assert readiness["safe_for_core_apply"] is False
+    for item in readiness["review_ready_items"]:
+        assert item["record_family"] == "rating_model"
+        assert item["review_classification"] == "add_candidate"
+        assert item["candidate_identity"]["normalized_target_type"] == "load_switch"
+        assert item["candidate_identity"]["normalized_rating_name"] == "current_max"
+        assert item["provenance"]["candidate_record_id"] in {"candidate_q1", "candidate_q2"}
+        assert item["provenance"]["source_approval_item_id"] in {"approve_9c4366f44e61", "approve_1179c269a25b"}
+        assert item["provenance"]["source_pr34_operation_id"] in {"op_33ac928966d3", "op_cde90c46cbb4"}
+        assert item["provenance"]["source_promotion_candidate_id"] in {"promo_rating_model_c6924c781f53", "promo_rating_model_457260c0879c"}
+        assert item["provenance"]["source_decision_id"] in {"decision_7a903398d9e8", "decision_5b0836a84c7d"}
+        assert item["provenance"]["evidence_refs"]
+        assert item["provenance"]["explicit_not_branch_current_a"] is True
+        assert item["candidate_identity"].get("field_name") != "branch_current_a"
+        assert item["record_family"] != "current_model"
 
 
 def test_rating_guardrails_no_pin_expansion_or_regulator_side_inference(tmp_path: Path) -> None:

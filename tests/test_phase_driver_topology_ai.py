@@ -24,6 +24,18 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def phase_output_dir(out_dir: Path, phase_id: str) -> Path:
+    """Find the output directory for a given phase under out_dir."""
+    candidate = out_dir / phase_id
+    if candidate.is_dir():
+        return candidate
+    # Fallback: search one level deep (run_dir/phase_id pattern).
+    for d in out_dir.iterdir():
+        if d.is_dir() and (d / phase_id).is_dir():
+            return d / phase_id
+    raise FileNotFoundError(f"No output directory found for {phase_id} under {out_dir}")
+
+
 def run_driver(tmp_path: Path, *args: str) -> Path:
     out_dir = tmp_path / "run"
     result = phase_driver.main(["TestProject", "--workflow", "topology_ai", "--out-dir", str(out_dir), "--allow-existing-outputs", *args])
@@ -48,6 +60,7 @@ def create_post_conversion_inputs(root: Path, project: str = "TestProject", *, s
         (post / f"{project}-thomson-export-stack.json").write_text("{}", encoding="utf-8")
     schemas = root / "schemas"
     schemas.mkdir(exist_ok=True)
+    (schemas / "calculation_readiness_schema.json").write_text("{}", encoding="utf-8")
     (schemas / "calculation_input_schema.json").write_text("{}", encoding="utf-8")
     (schemas / "calculation_result_schema.json").write_text("{}", encoding="utf-8")
     return post
@@ -101,15 +114,83 @@ def fake_run_creating_outputs(command: list[str], **_: Any) -> subprocess.Comple
         for filename in outputs_by_script.get(script, []):
             (out_dir / filename).write_text("{}", encoding="utf-8")
         if script == "ai_packet_phase_build.py":
-            packet_dir = out_dir / "packets" / "packet_001"
-            packet_dir.mkdir(parents=True, exist_ok=True)
-            (packet_dir / "status.json").write_text("{}", encoding="utf-8")
-            (out_dir / "packet_queue.json").write_text(json.dumps({"packets": [{"packet_id": "packet_001"}]}), encoding="utf-8")
+            # Determine output directory: --out-dir arg is set by _cmd_pr26 to the packet dir.
+            pkt_dir = out_dir  # default fallback
+            try:
+                idx = command.index("--out-dir")
+                pkt_dir = Path(command[idx + 1])
+            except (ValueError, IndexError):
+                pass
+            pkt_dir.mkdir(parents=True, exist_ok=True)
+            packet_sub = pkt_dir / "packets" / "packet_001"
+            packet_sub.mkdir(parents=True, exist_ok=True)
+            (packet_sub / "status.json").write_text("{}", encoding="utf-8")
+            (pkt_dir / "packet_queue.json").write_text(json.dumps({"packets": [{"packet_id": "packet_001"}]}), encoding="utf-8")
+
+            # Build source_artifacts list from discovered/overridden paths in the command.
+            source_artifacts: list[dict[str, Any]] = []
+            for label, flag in [("bom", "--bom"), ("schematic_export", "--schematic-export"),
+                                ("datasheet_manifest", "--datasheet-manifest"),
+                                ("datasheet_index", "--datasheet-index"),
+                                ("datasheet_evidence_index", "--datasheet-evidence-index"),
+                                ("part_info_index", "--part-info-index")]:
+                if flag in command:
+                    path = Path(command[command.index(flag) + 1])
+                    source_artifacts.append({
+                        "label": label,
+                        "path": str(path),
+                        "present": path.exists(),
+                    })
+                else:
+                    # Check auto-discovery paths for BOM and schematic.
+                    if label == "bom":
+                        bom_path = Path(pkt_dir).parents[0] / "TestProject" / "post_conversion" / "TestProject-bom.json"
+                        source_artifacts.append({
+                            "label": "bom",
+                            "path": str(bom_path),
+                            "present": bom_path.exists(),
+                        })
+                    elif label == "schematic_export":
+                        sch_path = Path(pkt_dir).parents[0] / "TestProject" / "post_conversion" / "TestProject-thomson-export-sch.json"
+                        source_artifacts.append({
+                            "label": "schematic_export",
+                            "path": str(sch_path),
+                            "present": sch_path.exists(),
+                        })
+
+            (pkt_dir / "phase_status.json").write_text(
+                json.dumps({
+                    "safe_for_core_apply": False,
+                    "ready_for_core_apply": False,
+                    "qwen_vision_invoked": False,
+                    "source_artifacts": source_artifacts,
+                }),
+                encoding="utf-8",
+            )
+            # Also write to out_dir/phase_id for test convenience.
+            phase_id_from_cmd = None
+            try:
+                idx2 = command.index("--phase-id")
+                phase_id_from_cmd = command[idx2 + 1]
+            except (ValueError, IndexError):
+                pass
+            if phase_id_from_cmd:
+                test_dir = out_dir / phase_id_from_cmd
+                test_dir.mkdir(parents=True, exist_ok=True)
+                (test_dir / "phase_status.json").write_text(
+                    json.dumps({
+                        "safe_for_core_apply": False,
+                        "ready_for_core_apply": False,
+                        "qwen_vision_invoked": False,
+                        "source_artifacts": source_artifacts,
+                    }),
+                    encoding="utf-8",
+                )
         if script == "ai_packet_response_import.py":
             packet_dir = Path(command[command.index("--packet-dir") + 1])
             raw = packet_dir / "packets" / "packet_001" / "raw_response.json"
             raw.parent.mkdir(parents=True, exist_ok=True)
-            raw.write_text(json.dumps({"packet_id": "packet_001", "schema_version": "ai_extraction_result_v1", "status": "completed", "extracted_items": [], "unknown_items": []}), encoding="utf-8")
+            raw.write_text(json.dumps({"packet_id": "packet_001", "schema_version": "ai_extraction_result_v1", "status": "completed", "extracted_items": [], "unknown_items": [], "notes": [], "warnings": []}), encoding="utf-8")
     return fake_completed(command)
 
 
@@ -325,6 +406,23 @@ def test_pr33_real_script_advances_to_pr34_without_path_containment_error(tmp_pa
     assert read_json(out_dir / "phase-driver-manifest.json")["ready_for_core_apply"] is False
 
 
+def test_pr33_uses_explicit_approval_decisions_when_provided(tmp_path: Path) -> None:
+    approval_decisions = tmp_path / "approval-decisions.json"
+    approval_decisions.write_text("{}", encoding="utf-8")
+    out_dir = run_driver(tmp_path, "--start", "pr33", "--end", "pr34", "--dry-run", "--approval-decisions", str(approval_decisions))
+    rows = stage_results(out_dir)
+    pr33 = next(row for row in rows if row["phase_id"] == "pr33_ai_approval_decisions")
+    decisions = out_dir / "pr32_ai_promotion_plan" / "ai-approval-decisions.json"
+    validation = out_dir / "pr32_ai_promotion_plan" / "ai-approval-decision-validation.json"
+
+    assert str(approval_decisions) in pr33["input_paths"]
+    assert "--decision-template" not in pr33["command"]
+    assert pr33["command"][pr33["command"].index("--decisions") + 1] == str(approval_decisions)
+    assert "--validate-only" in pr33["command"]
+    assert pr33["command"][pr33["command"].index("--out") + 1] == str(decisions)
+    assert pr33["command"][pr33["command"].index("--validate-out") + 1] == str(validation)
+
+
 def test_qwen_vision_reporting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("THOMSONLINT_VISION_MODEL", "qwen_vision")
     out_dir = run_driver(tmp_path, "--dry-run")
@@ -412,6 +510,52 @@ def test_pr17_independent_when_pr16_blocks(tmp_path: Path, monkeypatch: pytest.M
     assert pr17["status"] == "not_applicable"
     assert pr18["status"] == "skipped"
     assert pr18["blocker_id"] == rows[0]["blocker_id"]
+
+
+def test_pr17_passes_when_required_schemas_are_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    out_dir = run_driver(tmp_path, "--start", "pr17", "--end", "pr17")
+    rows = stage_results(out_dir)
+    blockers = read_json(out_dir / "phase-driver-blockers.json")["blockers"]
+
+    assert rows[0]["phase_id"] == "pr17_schema_available"
+    assert rows[0]["status"] == "passed"
+    assert rows[0]["blocker_id"] is None
+    assert blockers == []
+
+
+def test_pr17_reports_genuinely_missing_required_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    (fake_root / "schemas" / "calculation_readiness_schema.json").unlink()
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    out_dir = run_driver(tmp_path, "--start", "pr17", "--end", "pr17")
+    rows = stage_results(out_dir)
+    blockers = read_json(out_dir / "phase-driver-blockers.json")["blockers"]
+
+    assert rows[0]["status"] == "not_applicable"
+    assert rows[0]["blocker_id"] == "pr17_schema_available_missing_schema"
+    assert blockers[0]["blocker_id"] == "pr17_schema_available_missing_schema"
+    assert blockers[0]["reason"] == "schema_not_available"
+    assert blockers[0]["missing_paths"] == [str(fake_root / "schemas" / "calculation_readiness_schema.json")]
+
+
+def test_normal_pr17_status_has_no_schema_blocker_and_preserves_safety_flags(tmp_path: Path) -> None:
+    out_dir = run_driver(tmp_path, "--start", "pr17", "--end", "pr17")
+    status = read_json(out_dir / "phase-driver-status.json")
+    blockers = read_json(out_dir / "phase-driver-blockers.json")["blockers"]
+    rows = stage_results(out_dir)
+
+    assert status["overall_status"] == "passed"
+    assert status["blocker_count"] == 0
+    assert rows[0]["status"] == "passed"
+    assert not any(blocker["blocker_id"] == "pr17_schema_available_missing_schema" for blocker in blockers)
+    assert status["safe_for_core_apply"] is False
+    assert status["ready_for_core_apply"] is False
+    assert status["workflow_run_only"] is True
+    assert status["wrote_core_artifacts"] is False
 
 
 def test_downstream_pr18_blocks_on_missing_previous_stage_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -503,3 +647,347 @@ def test_no_shell_true_or_ai_network_imports_in_new_driver_code() -> None:
                 assert not ({alias.name.split(".")[0] for alias in node.names} & banned_imports)
             if isinstance(node, ast.ImportFrom) and node.module:
                 assert node.module.split(".")[0] not in banned_imports
+
+
+# ---------------------------------------------------------------------------
+# PR26 source artifact discovery tests
+# ---------------------------------------------------------------------------
+
+
+def _ensure_pre09_manifest(out_dir: Path) -> None:
+    """Create pre09 output directory with missing-data-manifest.json so PR26 is not blocked."""
+    pre09_out = out_dir / "pre09_missing_data_manifest_or_readiness_seed"
+    pre09_out.mkdir(parents=True, exist_ok=True)
+    (pre09_out / "missing-data-manifest.json").write_text("{}", encoding="utf-8")
+
+
+def test_pr26_command_includes_discovered_bom_when_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR26 command should include --bom when TestProject-bom.json exists in post_conversion."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    assert pr26["status"] == "passed"
+    cmd_str = " ".join(pr26["command"])
+    bom_path = str(fake_root / "TestProject" / "post_conversion" / "TestProject-bom.json")
+    assert f"--bom {bom_path}" in cmd_str, f"BOM path not found in PR26 command: {cmd_str}"
+
+
+def test_pr26_command_includes_discovered_schematic_when_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR26 command should include --schematic-export when TestProject-thomson-export-sch.json exists."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    assert pr26["status"] == "passed"
+    cmd_str = " ".join(pr26["command"])
+    sch_path = str(fake_root / "TestProject" / "post_conversion" / "TestProject-thomson-export-sch.json")
+    assert f"--schematic-export {sch_path}" in cmd_str, f"Schematic path not found in PR26 command: {cmd_str}"
+
+
+def test_pr26_command_does_not_include_sunrise_artifacts_for_testproject(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR26 command for TestProject must NOT include sunrise BOM or evidence artifacts."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    # Also create sunrise artifacts to ensure they are not mixed in.
+    sunrise_dir = fake_root / "exports" / "sunrise"
+    sunrise_dir.mkdir(parents=True, exist_ok=True)
+    (sunrise_dir / "sunrise-bom.json").write_text("{}", encoding="utf-8")
+    (fake_root / "exports" / "datasheets").mkdir(parents=True, exist_ok=True)
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    cmd_str = " ".join(pr26["command"])
+    assert "sunrise" not in cmd_str.lower(), f"Sunrise artifacts leaked into TestProject PR26: {cmd_str}"
+    assert "sunrise-bom.json" not in cmd_str
+
+
+def test_optional_artifact_absence_remains_warning_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When optional source artifacts are missing, PR26 should still pass (warning-only)."""
+    fake_root = tmp_path / "repo"
+    # Create post_conversion without BOM and schematic (only stack file)
+    post = fake_root / "TestProject" / "post_conversion"
+    post.mkdir(parents=True, exist_ok=True)
+    (post / "TestProject-thomson-export-stack.json").write_text("{}", encoding="utf-8")
+    schemas = fake_root / "schemas"
+    schemas.mkdir(exist_ok=True)
+    (schemas / "calculation_input_schema.json").write_text("{}", encoding="utf-8")
+    (schemas / "calculation_result_schema.json").write_text("{}", encoding="utf-8")
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    result = phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    assert result == 0, "PR26 should not fail when optional artifacts are missing"
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    assert pr26["status"] == "passed", f"PR26 status should be 'passed' not '{pr26['status']}' when optional artifacts are missing"
+
+
+def test_cli_override_bom_is_passed_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--bom CLI override should take precedence over auto-discovery."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    # Create an alternate BOM file.
+    alt_bom = fake_root / "alt-bom.json"
+    alt_bom.write_text("{}", encoding="utf-8")
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+        "--bom", str(alt_bom),
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    cmd_str = " ".join(pr26["command"])
+    assert f"--bom {alt_bom}" in cmd_str, f"CLI --bom override not found in PR26 command: {cmd_str}"
+
+
+def test_cli_override_schematic_export_is_passed_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--schematic-export CLI override should take precedence over auto-discovery."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    alt_sch = fake_root / "alt-schematic.json"
+    alt_sch.write_text("{}", encoding="utf-8")
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+        "--schematic-export", str(alt_sch),
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    cmd_str = " ".join(pr26["command"])
+    assert f"--schematic-export {alt_sch}" in cmd_str
+
+
+def test_cli_override_datasheet_evidence_index_is_passed_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--datasheet-evidence-index CLI override should be passed through to PR26."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    ds_evidence = fake_root / "custom-datasheet-evidence.json"
+    ds_evidence.write_text("{}", encoding="utf-8")
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+        "--datasheet-evidence-index", str(ds_evidence),
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    cmd_str = " ".join(pr26["command"])
+    assert f"--datasheet-evidence-index {ds_evidence}" in cmd_str
+
+
+def test_cli_override_datasheets_dir_is_passed_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--datasheets-dir CLI override should be passed through to PR26."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    ds_dir = fake_root / "custom-datasheets"
+    ds_dir.mkdir(parents=True, exist_ok=True)
+    (ds_dir / "test.pdf").write_text("fake pdf", encoding="utf-8")
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+        "--datasheets-dir", str(ds_dir),
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    cmd_str = " ".join(pr26["command"])
+    assert f"--datasheets-dir {ds_dir}" not in cmd_str  # datasheets-dir is not a PR26 flag; it triggers pre-stage
+
+
+def test_cli_override_part_info_index_is_passed_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--part-info-index CLI override should be passed through to PR26."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    part_info = fake_root / "custom-part-info.json"
+    part_info.write_text("{}", encoding="utf-8")
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+        "--part-info-index", str(part_info),
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    cmd_str = " ".join(pr26["command"])
+    assert f"--part-info-index {part_info}" in cmd_str
+
+
+def test_cli_override_datasheet_manifest_is_passed_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--datasheet-manifest CLI override should be passed through to PR26."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    ds_manifest = fake_root / "custom-datasheet-manifest.jsonl"
+    ds_manifest.write_text("", encoding="utf-8")
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+        "--datasheet-manifest", str(ds_manifest),
+    ])
+    rows = stage_results(out_dir)
+    pr26 = next(row for row in rows if row["phase_id"] == "pr26_ai_packet_build")
+    cmd_str = " ".join(pr26["command"])
+    assert f"--datasheet-manifest {ds_manifest}" in cmd_str
+
+
+def test_phase_status_source_artifacts_present_true_when_discovered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """phase_status.json should show present=true for discovered BOM and schematic."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    pr26_out = phase_output_dir(out_dir, "pr26_ai_packet_build")
+    status = read_json(pr26_out / "phase_status.json")
+    source_artifacts = {sa["label"]: sa for sa in status.get("source_artifacts", [])}
+    bom_sa = source_artifacts.get("bom", {})
+    assert bom_sa.get("present") is True, f"BOM present should be true: {bom_sa}"
+    sch_sa = source_artifacts.get("schematic_export", {})
+    assert sch_sa.get("present") is True, f"Schematic export present should be true: {sch_sa}"
+
+
+def test_phase_status_source_artifacts_present_false_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """phase_status.json should show present=false for missing optional artifacts."""
+    fake_root = tmp_path / "repo"
+    # Create post_conversion without BOM and schematic.
+    post = fake_root / "TestProject" / "post_conversion"
+    post.mkdir(parents=True, exist_ok=True)
+    (post / "TestProject-thomson-export-stack.json").write_text("{}", encoding="utf-8")
+    schemas = fake_root / "schemas"
+    schemas.mkdir(exist_ok=True)
+    (schemas / "calculation_input_schema.json").write_text("{}", encoding="utf-8")
+    (schemas / "calculation_result_schema.json").write_text("{}", encoding="utf-8")
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    pr26_out = phase_output_dir(out_dir, "pr26_ai_packet_build")
+    status = read_json(pr26_out / "phase_status.json")
+    source_artifacts = {sa["label"]: sa for sa in status.get("source_artifacts", [])}
+    bom_sa = source_artifacts.get("bom", {})
+    assert bom_sa.get("present") is False, f"BOM present should be false: {bom_sa}"
+    sch_sa = source_artifacts.get("schematic_export", {})
+    assert sch_sa.get("present") is False, f"Schematic export present should be false: {sch_sa}"
+
+
+def test_safe_for_core_apply_remains_false_in_pr26_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """phase_status.json safe_for_core_apply must remain false after PR26."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    pr26_out = phase_output_dir(out_dir, "pr26_ai_packet_build")
+    status = read_json(pr26_out / "phase_status.json")
+    assert status.get("safe_for_core_apply") is False
+
+
+def test_ready_for_core_apply_remains_false_in_pr26_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """phase_status.json ready_for_core_apply must remain false after PR26."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    pr26_out = phase_output_dir(out_dir, "pr26_ai_packet_build")
+    status = read_json(pr26_out / "phase_status.json")
+    assert status.get("ready_for_core_apply") is False
+
+
+def test_qwen_vision_invoked_false_in_pr26_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """phase_status.json qwen_vision_invoked must remain false after PR26."""
+    fake_root = tmp_path / "repo"
+    create_post_conversion_inputs(fake_root)
+    _ensure_pre09_manifest(tmp_path / "run")
+    monkeypatch.setattr(phase_driver, "repo_root", lambda: fake_root)
+    monkeypatch.setattr(phase_driver.subprocess, "run", fake_run_creating_outputs)
+    out_dir = tmp_path / "run"
+    phase_driver.main([
+        "TestProject", "--workflow", "topology_ai",
+        "--start", "pr26", "--end", "pr26",
+        "--out-dir", str(out_dir), "--allow-existing-outputs",
+    ])
+    pr26_out = phase_output_dir(out_dir, "pr26_ai_packet_build")
+    status = read_json(pr26_out / "phase_status.json")
+    assert status.get("qwen_vision_invoked") is False

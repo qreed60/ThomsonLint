@@ -5,9 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import jsonschema
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "calculation_readiness_inventory.py"
+SCHEMA = ROOT / "schemas" / "calculation_readiness_schema.json"
 
 
 def run_inventory(*args: str) -> subprocess.CompletedProcess[str]:
@@ -470,3 +473,10 @@ def test_manual_converter_shaped_minimal_fixture_works(tmp_path: Path) -> None:
     assert artifact["calculation_readiness_pass"] is True
     assert artifact["branch_readiness"]
     assert artifact["rail_readiness"]
+
+
+def test_output_validates_against_calculation_readiness_schema(tmp_path: Path) -> None:
+    result, out = invoke(tmp_path)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    jsonschema.validate(instance=read_json(out), schema=read_json(SCHEMA))

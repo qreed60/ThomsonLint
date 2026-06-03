@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from topology_ai_phase_registry import PhaseSpec, TopologyPaths, selected_phases
+from topology_ai_phase_registry import PhaseSpec, TopologyPaths, _missing_manifest, selected_phases
 
 
 WORKFLOW = "topology_ai"
@@ -208,7 +208,15 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         fixtures_dir=Path(args.fixtures_dir).resolve() if args.fixtures_dir else None,
         responses_dir=Path(args.responses_dir).resolve() if args.responses_dir else None,
+        approval_decisions=Path(args.approval_decisions).resolve() if args.approval_decisions else None,
         allow_partial_responses=args.allow_partial_responses,
+        bom_path=Path(args.bom).resolve() if args.bom else None,
+        schematic_export_path=Path(args.schematic_export).resolve() if args.schematic_export else None,
+        datasheets_dir=Path(args.datasheets_dir).resolve() if args.datasheets_dir else None,
+        datasheet_manifest_path=Path(args.datasheet_manifest).resolve() if args.datasheet_manifest else None,
+        datasheet_index_path=Path(args.datasheet_index).resolve() if args.datasheet_index else None,
+        datasheet_evidence_index_path=Path(args.datasheet_evidence_index).resolve() if args.datasheet_evidence_index else None,
+        part_info_index_path=Path(args.part_info_index).resolve() if args.part_info_index else None,
     )
     blockers: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
@@ -368,6 +376,43 @@ def execute_topology_ai(args: argparse.Namespace) -> int:
             )
             continue
 
+        # Pre-stage: auto-generate datasheet evidence index before PR26 if datasheets_dir is provided.
+        if phase.phase_id == "pr26_ai_packet_build" and paths.datasheets_dir and paths.datasheets_dir.exists():
+            evidence_out = paths.run_dir / "pre26_datasheet_evidence"
+            evidence_index_path = evidence_out / "datasheet-evidence-index.json"
+            if not evidence_index_path.exists() and (paths.datasheet_evidence_index_path is None or not Path(paths.datasheet_evidence_index_path).exists()):
+                evidence_cmd = [
+                    paths.python_executable,
+                    str(paths.repo_root / "scripts" / "datasheet_evidence_index.py"),
+                    "--project", paths.project,
+                    "--datasheets-dir", str(paths.datasheets_dir),
+                    "--out-dir", str(evidence_out),
+                ]
+                if paths.part_info_index_path and Path(paths.part_info_index_path).exists():
+                    evidence_cmd.extend(["--part-info-index", str(paths.part_info_index_path)])
+                if _missing_manifest(paths).exists():
+                    evidence_cmd.extend(["--missing-data-manifest", str(_missing_manifest(paths))])
+                evidence_out.mkdir(parents=True, exist_ok=True)
+                completed_evidence = subprocess.run(evidence_cmd, cwd=root, text=True, capture_output=True)
+                if completed_evidence.returncode != 0:
+                    print(
+                        f"WARNING: datasheet evidence index generation failed for {paths.project}: "
+                        f"{completed_evidence.stderr.strip() or 'unknown error'}",
+                        file=sys.stderr,
+                    )
+                else:
+                    results.append(
+                        stage_record(
+                            PhaseSpec("pre26_datasheet_evidence_index", 0, "datasheet evidence index generation", None, lambda p: [], lambda p: [evidence_index_path], lambda p: [], "auto-generated datasheet evidence index from --datasheets-dir"),
+                            command=evidence_cmd,
+                            status="passed" if completed_evidence.returncode == 0 else "failed",
+                            return_code=completed_evidence.returncode,
+                            input_paths=[paths.datasheets_dir],
+                            output_paths=[evidence_index_path],
+                            reason=f"auto-generated datasheet evidence index; {len(list(paths.datasheets_dir.glob('*.pdf')))} PDFs found" if paths.datasheets_dir.exists() else "datasheets_dir not available",
+                        )
+                    )
+
         for output in outputs:
             output.parent.mkdir(parents=True, exist_ok=True)
         completed = subprocess.run(command or [], cwd=root, text=True, capture_output=True)
@@ -434,6 +479,7 @@ def write_run_artifacts(
             "allow_existing_outputs": args.allow_existing_outputs,
             "fixtures_dir": args.fixtures_dir,
             "responses_dir": args.responses_dir,
+            "approval_decisions": args.approval_decisions,
             "allow_partial_responses": args.allow_partial_responses,
             "continue_with_existing_ai_artifacts": args.continue_with_existing_ai_artifacts,
             "stop_at_missing_ai": args.stop_at_missing_ai,
@@ -576,11 +622,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--allow-existing-outputs", action="store_true")
     parser.add_argument("--fixtures-dir")
     parser.add_argument("--responses-dir")
+    parser.add_argument("--approval-decisions")
     parser.add_argument("--allow-partial-responses", action="store_true")
     parser.add_argument("--continue-with-existing-ai-artifacts", action="store_true")
     parser.add_argument("--stop-at-missing-ai", action="store_true")
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    # Optional source artifact overrides for PR26
+    parser.add_argument("--bom")
+    parser.add_argument("--schematic-export")
+    parser.add_argument("--datasheets-dir")
+    parser.add_argument("--datasheet-manifest")
+    parser.add_argument("--datasheet-index")
+    parser.add_argument("--datasheet-evidence-index")
+    parser.add_argument("--part-info-index")
     return parser.parse_args(argv)
 
 

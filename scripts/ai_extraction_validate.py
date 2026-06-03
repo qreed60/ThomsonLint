@@ -80,6 +80,8 @@ ROLE_FIELDS = {
     "rail_relationship",
 }
 SUPPORTED_FIELD_NAMES = CURRENT_FIELDS | RATING_FIELDS | ROLE_FIELDS
+CONNECTOR_RATING_TARGET_TYPES = {"connector_rating", "connector_pin_rating"}
+CONNECTOR_CURRENT_RATING_FIELDS = {"current_max", "pin_current_max", "continuous_current_max", "package_current_limit"}
 
 SUPPORTED_UNITS = {
     "A",
@@ -343,9 +345,12 @@ def validate_item(packet_id: str, item: dict[str, Any], valid_missing_ids: set[s
     if item.get("multiple_candidate_values"):
         return "human", human(packet_id, source_id, "multiple_candidate_values", "multiple candidate values require review", item, index)
     current_related = field_name in CURRENT_FIELDS
+    connector_current_rating = target_type in CONNECTOR_RATING_TARGET_TYPES and field_name in CONNECTOR_CURRENT_RATING_FIELDS
     simple_rating = field_name in {"current_max", "pin_current_max", "hold_current", "trip_current", "continuous_current_max", "thermal_current_limit", "package_current_limit", "voltage_rating", "ripple_current"}
     if current_related and not item.get("condition"):
         return "human", human(packet_id, source_id, "ambiguous_condition", "current extraction lacks operating condition", item, index)
+    if connector_current_rating and not item.get("condition"):
+        return "human", human(packet_id, source_id, "ambiguous_condition", "connector current rating lacks contact/wire-gauge or operating condition", item, index)
     if is_number(value) and not item.get("source_page"):
         return "human", human(packet_id, source_id, "source_page_missing", "numeric value has source_file/evidence but no source_page", item, index)
     if normalized_unit == "text" and field_name in ROLE_FIELDS:

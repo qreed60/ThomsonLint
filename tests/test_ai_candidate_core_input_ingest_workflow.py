@@ -28,7 +28,9 @@ OUTPUT_NAMES = {
     "ai-candidate-addenda-ingest-index.json",
     "ai-candidate-core-input-ingest-review.json",
     "ai-candidate-core-input-ingest-blockers.json",
+    "ai-candidate-core-input-ingest-summary.txt",
 }
+JSON_OUTPUT_NAMES = OUTPUT_NAMES - {"ai-candidate-core-input-ingest-summary.txt"}
 FORBIDDEN_KEYS = {
     "finding_id",
     "issue_id",
@@ -137,6 +139,8 @@ def rating_record() -> dict[str, Any]:
         "target_identity": {"connector_ref": "J1"},
         "candidate_value": {"rating_a": 3.0, "unit": "A", "condition": "connector_wide"},
         "evidence_refs": ["datasheets/J1.pdf:14"],
+        "explicit_not_branch_current_a": True,
+        "operator_preview": {"explicit_note": "rating only; not branch_current_a"},
     }
 
 
@@ -241,7 +245,71 @@ def test_valid_candidate_records_are_not_silently_dropped(tmp_path: Path) -> Non
     assert output(tmp_path, "ai-candidate-core-input-ingest-manifest.json")["summary"]["current_candidate_normalized_record_count"] > 0
     assert output(tmp_path, "ai-candidate-core-input-ingest-manifest.json")["summary"]["rating_candidate_normalized_record_count"] > 0
     assert not any(row["reason_code"] in {"candidate_current_adapter_empty", "candidate_rating_adapter_empty"} for row in blockers)
-    assert all("empty" not in gap["detail"] for gap in review["provenance_gaps"])
+    assert review["provenance_gaps"] == []
+
+
+def test_candidate_rating_provenance_is_preserved_in_normalized_output(tmp_path: Path) -> None:
+    fixtures(tmp_path, current_records=[], rating_records=[rating_record()])
+    assert run_workflow(tmp_path).returncode == 0
+    row = read_json(out_dir(tmp_path) / "ai-candidate-rating-models-normalized.json")["normalized_ratings"][0]
+    assert row["candidate_record_id"] == "candidate_rating_001"
+    assert row["source_approval_item_id"] == "aq_rating"
+    assert row["source_decision_id"] == "decision_rating"
+    assert row["source_pr34_operation_id"] == "op_rating"
+    assert row["source_promotion_candidate_id"] == "pc_rating"
+    assert row["evidence_refs"] == ["datasheets/J1.pdf:14"]
+    assert row["explicit_not_branch_current_a"] is True
+    assert row["operator_preview"]["explicit_note"] == "rating only; not branch_current_a"
+    assert output(tmp_path, "ai-candidate-core-input-ingest-manifest.json")["summary"]["provenance_gap_count"] == 0
+
+
+def test_q1_q2_rating_inputs_produce_only_normalized_rating_records(tmp_path: Path) -> None:
+    q1 = rating_record()
+    q1.update({
+        "candidate_record_id": "candidate_q1",
+        "source_pr34_operation_id": "op_33ac928966d3",
+        "source_promotion_candidate_id": "promo_rating_model_c6924c781f53",
+        "source_approval_item_id": "approve_9c4366f44e61",
+        "source_decision_id": "decision_7a903398d9e8",
+        "target_identity": {"target_type": "load_switch", "refdes": "Q1", "field_name": "current_max"},
+        "candidate_value": {"value": 0.2, "unit": "A"},
+        "evidence_refs": ["BSS138W page 1"],
+    })
+    q2 = rating_record()
+    q2.update({
+        "candidate_record_id": "candidate_q2",
+        "source_pr34_operation_id": "op_cde90c46cbb4",
+        "source_promotion_candidate_id": "promo_rating_model_457260c0879c",
+        "source_approval_item_id": "approve_1179c269a25b",
+        "source_decision_id": "decision_5b0836a84c7d",
+        "target_identity": {"target_type": "load_switch", "refdes": "Q2", "field_name": "current_max"},
+        "candidate_value": {"value": 8.8, "unit": "A"},
+        "evidence_refs": ["FDS4435BZ page 1"],
+    })
+    fixtures(tmp_path, current_records=[], rating_records=[q1, q2])
+    assert run_workflow(tmp_path).returncode == 0
+    current = read_json(out_dir(tmp_path) / "ai-candidate-current-models-normalized.json")["normalized_currents"]
+    ratings = read_json(out_dir(tmp_path) / "ai-candidate-rating-models-normalized.json")["normalized_ratings"]
+    assert current == []
+    assert len(ratings) == 2
+    assert {row["refdes"] for row in ratings} == {"Q1", "Q2"}
+    assert {row["normalized_rating_name"] for row in ratings} == {"current_max"}
+    assert {row["value_a"] for row in ratings} == {0.2, 8.8}
+    assert all(row.get("record_type") != "branch_current" for row in ratings)
+    assert all(row.get("field_name") != "branch_current_a" for row in ratings)
+    assert {row["candidate_record_id"] for row in ratings} == {"candidate_q1", "candidate_q2"}
+
+
+def test_ambiguous_normalized_match_still_reports_provenance_gap(tmp_path: Path) -> None:
+    first = rating_record()
+    first["candidate_record_id"] = "candidate_rating_a"
+    second = rating_record()
+    second["candidate_record_id"] = "candidate_rating_b"
+    second["source_pr34_operation_id"] = "op_rating_b"
+    fixtures(tmp_path, current_records=[], rating_records=[first, second])
+    assert run_workflow(tmp_path).returncode == 0
+    blockers = output(tmp_path, "ai-candidate-core-input-ingest-blockers.json")["blocker_records"]
+    assert any(row["reason_code"] == "provenance_gap" and "ambiguous" in row["details"] for row in blockers)
 
 
 def test_skip_flags_skip_expected_steps(tmp_path: Path) -> None:
@@ -333,10 +401,10 @@ def test_addenda_index_review_blockers_and_summary(tmp_path: Path) -> None:
     assert all(row["safe_to_merge_automatically"] is False for row in addenda["indexed_addenda_files"])
     review = output(tmp_path, "ai-candidate-core-input-ingest-review.json")
     assert "current allocation" in review["not_performed_steps"]
-    assert review["provenance_gaps"]
+    assert review["provenance_gaps"] == []
     blockers = output(tmp_path, "ai-candidate-core-input-ingest-blockers.json")["blocker_records"]
     assert any(row["reason_code"] == "addenda_requires_merge_validator" for row in blockers)
-    assert any(row["reason_code"] == "provenance_gap" for row in blockers)
+    assert not any(row["reason_code"] == "provenance_gap" for row in blockers)
     summary = output(tmp_path, "ai-candidate-core-input-ingest-manifest.json")["summary"]
     assert summary["blocker_count"] == len(blockers)
     assert summary["addenda_records_seen"] == 4

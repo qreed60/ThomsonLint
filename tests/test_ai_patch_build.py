@@ -236,6 +236,22 @@ def test_connector_pin_rating_item_maps_to_rating_model_patch(tmp_path: Path) ->
     assert only_patch(artifact)["patch_class"] == "rating_model_patch"
 
 
+def test_connector_rating_item_maps_to_rating_model_patch(tmp_path: Path) -> None:
+    item = accepted_item(
+        target_type="connector_rating",
+        target_refdes="P4",
+        target_mpn="S2B-XH-A (LF)(SN)",
+        field_name="current_max",
+        value=3.0,
+        normalized_value=3.0,
+        condition="AC/DC, AWG #22",
+    )
+    artifact = artifact_for_items(tmp_path, [item])
+    patch = only_patch(artifact)
+    assert patch["patch_class"] == "rating_model_patch"
+    assert patch["target_type"] == "connector_rating"
+
+
 def test_regulator_rating_item_maps_to_rating_model_patch(tmp_path: Path) -> None:
     item = accepted_item(target_type="regulator_rating", target_refdes="U1", field_name="output_current_max", value=1.5, normalized_value=1.5)
     artifact = artifact_for_items(tmp_path, [item])
