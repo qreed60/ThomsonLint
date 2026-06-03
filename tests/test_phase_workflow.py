@@ -64,6 +64,97 @@ def checkpoint_row(phase: int, phase_name: str) -> dict:
     }
 
 
+def phase18_expanded_candidate_artifact(**overrides: object) -> dict:
+    artifact = {
+        "project": "TestProject",
+        "phase": 18,
+        "assessment_profile": "engineering",
+        "verified_finding_candidates": [],
+        "engineering_concern_candidates": [
+            {
+                "candidate_id": "ec_001",
+                "candidate_type": "engineering_concern_candidate",
+                "title": "Apparent load-switching section needs review",
+                "statement": "Observed apparent V24P0 high-side PMOS/load-switching section. Verify FET Vds, Vgs, gate pull network, transient exposure, and load current.",
+                "engineering_basis": "Vision annotation references Q2/R68/R69/R70 and V24P0/P20 context.",
+                "evidence_refs": ["exports/TestProject-vision-engineering-annotations.json#annotation-1"],
+                "source_artifacts": ["exports/TestProject-vision-engineering-annotations.json"],
+                "observed_refdes": ["Q2", "R68", "R69", "R70"],
+                "observed_nets": ["V24P0", "P20"],
+                "missing_information": ["exact gate-source voltage", "load current"],
+                "recommended_next_check": "Cross-check schematic and datasheet constraints before any final claim.",
+                "confidence": 0.7,
+                "promotion_eligibility": "not_verified",
+                "final_finding_allowed": False,
+                "notes": [],
+            }
+        ],
+        "blocked_verification_candidates": [
+            {
+                "candidate_id": "bv_001",
+                "candidate_type": "blocked_verification_candidate",
+                "title": "Impedance cannot be verified",
+                "statement": "Impedance cannot be verified because stackup evidence lacks impedance rules. Do not report impedance failure.",
+                "engineering_basis": "Controlled impedance requirements are not present in stackup evidence.",
+                "evidence_refs": ["exports/TestProject-stackup-evidence-review.json"],
+                "source_artifacts": ["exports/TestProject-stackup-evidence-review.json"],
+                "missing_information": ["controlled impedance requirements", "fabrication stackup constraints"],
+                "recommended_next_check": "Request impedance requirements or fabrication stackup constraints.",
+                "confidence": 0.8,
+                "promotion_eligibility": "blocked",
+                "final_finding_allowed": False,
+                "notes": [],
+            }
+        ],
+        "datasheet_check_candidates": [],
+        "calculation_candidates": [
+            {
+                "candidate_id": "calc_001",
+                "candidate_type": "calculation_candidate",
+                "title": "Regulator thermal margin needs deterministic calculation",
+                "statement": "Regulator thermal margin requires deterministic calculation.",
+                "engineering_basis": "Missing branch current prevents thermal/current-density final finding.",
+                "evidence_refs": ["exports/TestProject-bom-evidence-inventory.json"],
+                "source_artifacts": ["exports/TestProject-bom-evidence-inventory.json"],
+                "missing_information": ["Vin", "Vout", "output current", "package thermal resistance", "ambient assumption", "copper area"],
+                "recommended_next_check": "Run deterministic thermal calculation after current data is available.",
+                "confidence": 0.65,
+                "promotion_eligibility": "needs_calculation",
+                "final_finding_allowed": False,
+                "notes": [],
+            }
+        ],
+        "human_review_candidates": [],
+        "rejected_or_unsupported_candidates": [
+            {
+                "candidate_id": "rej_001",
+                "candidate_type": "rejected_or_unsupported_candidate",
+                "title": "Generic visual claim rejected",
+                "statement": "Routing verified.",
+                "engineering_basis": "Generic visual claim lacks page-specific evidence.",
+                "evidence_refs": [],
+                "source_artifacts": [],
+                "promotion_eligibility": "rejected",
+                "final_finding_allowed": False,
+                "notes": [],
+            }
+        ],
+        "summary": {
+            "verified_finding_candidate_count": 0,
+            "engineering_concern_candidate_count": 1,
+            "blocked_verification_candidate_count": 1,
+            "datasheet_check_candidate_count": 0,
+            "calculation_candidate_count": 1,
+            "human_review_candidate_count": 0,
+            "rejected_or_unsupported_candidate_count": 1,
+        },
+        "blockers": [],
+        "warnings": [],
+    }
+    artifact.update(overrides)
+    return artifact
+
+
 def test_ensure_checkpoint_writes_one_jsonl_line(tmp_path: Path) -> None:
     result = subprocess.run(
         [
@@ -224,6 +315,146 @@ def test_phase13_engineering_profile_required_artifacts_include_vision_annotatio
     artifacts = ensure.phase_artifact_templates(13)
 
     assert "exports/{project}-vision-engineering-annotations.json" in artifacts
+
+
+def test_phase18_strict_profile_preserves_candidate_artifact_compatibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure = load_module(ROOT / "scripts" / "ensure_phase_checkpoint.py")
+    monkeypatch.delenv("THOMSONLINT_ASSESSMENT_PROFILE", raising=False)
+    path = tmp_path / "TestProject-candidate-findings.json"
+    path.write_text(json.dumps({"legacy_candidates": []}), encoding="utf-8")
+
+    ok, blockers = ensure.artifact_passes(path, 18)
+
+    assert ok is True
+    assert blockers == []
+
+
+def test_phase18_engineering_prompt_includes_expanded_candidate_categories(tmp_path: Path) -> None:
+    prompt = write_phase_prompt(tmp_path, 18, "engineering")
+
+    assert "exports/example-candidate-findings.json" in prompt
+    assert "exports/example-vision-engineering-annotations.json" in prompt
+    assert "verified_finding_candidates" in prompt
+    assert "engineering_concern_candidates" in prompt
+    assert "blocked_verification_candidates" in prompt
+    assert "datasheet_check_candidates" in prompt
+    assert "calculation_candidates" in prompt
+    assert "human_review_candidates" in prompt
+    assert "rejected_or_unsupported_candidates" in prompt
+    assert "Regulator fails thermal check" in prompt
+    assert "Impedance cannot be verified because stackup evidence lacks impedance rules" in prompt
+
+
+def test_phase18_engineering_audit_accepts_zero_verified_with_concerns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit = load_module(ROOT / "scripts" / "audit_phase.py")
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "engineering")
+    path = tmp_path / "TestProject-candidate-findings.json"
+    path.write_text(json.dumps(phase18_expanded_candidate_artifact()), encoding="utf-8")
+    checkpoint = tmp_path / "TestProject-phase-checkpoints.jsonl"
+    checkpoint.write_text(json.dumps(checkpoint_row(18, "Candidate Finding Development")) + "\n", encoding="utf-8")
+
+    audit.audit_phase(tmp_path, "TestProject", 18)
+
+
+def test_phase18_engineering_checkpoint_accepts_blocked_impedance_and_missing_current_categories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure = load_module(ROOT / "scripts" / "ensure_phase_checkpoint.py")
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "engineering")
+    path = tmp_path / "TestProject-candidate-findings.json"
+    artifact = phase18_expanded_candidate_artifact()
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    ok, blockers = ensure.artifact_passes(path, 18)
+
+    assert ok is True
+    assert blockers == []
+    assert artifact["verified_finding_candidates"] == []
+    assert artifact["blocked_verification_candidates"][0]["candidate_type"] == "blocked_verification_candidate"
+    assert artifact["calculation_candidates"][0]["candidate_type"] == "calculation_candidate"
+
+
+def test_phase18_engineering_rejects_unsupported_final_style_verified_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure = load_module(ROOT / "scripts" / "ensure_phase_checkpoint.py")
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "engineering")
+    path = tmp_path / "TestProject-candidate-findings.json"
+    artifact = phase18_expanded_candidate_artifact(
+        verified_finding_candidates=[
+            {
+                "candidate_id": "vf_001",
+                "candidate_type": "verified_finding_candidate",
+                "title": "Regulator fails thermal check",
+                "statement": "Regulator fails thermal check.",
+                "engineering_basis": "No deterministic calculation cited.",
+                "evidence_refs": ["exports/TestProject-vision-engineering-annotations.json"],
+                "source_artifacts": ["exports/TestProject-vision-engineering-annotations.json"],
+                "final_finding_allowed": False,
+            }
+        ],
+        summary={
+            "verified_finding_candidate_count": 1,
+            "engineering_concern_candidate_count": 1,
+            "blocked_verification_candidate_count": 1,
+            "datasheet_check_candidate_count": 0,
+            "calculation_candidate_count": 1,
+            "human_review_candidate_count": 0,
+            "rejected_or_unsupported_candidate_count": 1,
+        },
+    )
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    ok, blockers = ensure.artifact_passes(path, 18)
+
+    assert ok is False
+    assert any("unsupported final-style claim" in blocker for blocker in blockers)
+
+
+def test_phase18_engineering_rejects_generic_visual_verified_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure = load_module(ROOT / "scripts" / "ensure_phase_checkpoint.py")
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "engineering")
+    path = tmp_path / "TestProject-candidate-findings.json"
+    artifact = phase18_expanded_candidate_artifact(
+        verified_finding_candidates=[
+            {
+                "candidate_id": "vf_002",
+                "candidate_type": "verified_finding_candidate",
+                "title": "Routing verified",
+                "statement": "Routing verified.",
+                "engineering_basis": "Generic visual claim.",
+                "evidence_refs": ["exports/TestProject-vision-engineering-annotations.json"],
+                "source_artifacts": ["exports/TestProject-vision-engineering-annotations.json"],
+                "final_finding_allowed": False,
+            }
+        ],
+        summary={
+            "verified_finding_candidate_count": 1,
+            "engineering_concern_candidate_count": 1,
+            "blocked_verification_candidate_count": 1,
+            "datasheet_check_candidate_count": 0,
+            "calculation_candidate_count": 1,
+            "human_review_candidate_count": 0,
+            "rejected_or_unsupported_candidate_count": 1,
+        },
+    )
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+
+    ok, blockers = ensure.artifact_passes(path, 18)
+
+    assert ok is False
+    assert any("generic visual claim" in blocker for blocker in blockers)
 
 
 def test_phase11_validation_gate_allows_recorded_dfm_violations(tmp_path: Path) -> None:

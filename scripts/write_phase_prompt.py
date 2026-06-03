@@ -1365,6 +1365,95 @@ Do not execute Phase 18 if overall_gate_pass=false.
 
     # BEGIN STRICT PHASE 18/19 FULL COVERAGE PROMPT
     if args.phase == 18:
+        phase18_candidate_category_instructions = ""
+        if assessment_profile in {"balanced", "engineering"}:
+            phase18_candidate_category_instructions = f"""
+
+Engineering assessment candidate categories for profile {assessment_profile}:
+- Keep the canonical output path: exports/{project}-candidate-findings.json.
+- Do not write only exports/{project}-phase-runs/phase-18/candidate-findings.json.
+- Treat exports/{project}-vision-engineering-annotations.json as optional input when present.
+  Use it to derive engineering concern, blocked verification, datasheet check, calculation,
+  and human-review candidates, but do not treat vision annotations as verified findings by default.
+  If the annotation artifact is absent, warn and continue with existing Phase 8-16 evidence.
+- Candidate records are pre-final-review classifications, not final findings.
+- Do not mutate core artifacts.
+- Do not invent numeric values.
+
+Required top-level candidate arrays:
+- verified_finding_candidates
+- engineering_concern_candidates
+- blocked_verification_candidates
+- datasheet_check_candidates
+- calculation_candidates
+- human_review_candidates
+- rejected_or_unsupported_candidates
+
+Candidate record fields, where applicable:
+- candidate_id
+- candidate_type
+- title
+- statement
+- engineering_basis
+- evidence_refs
+- source_artifacts
+- observed_refdes
+- observed_nets
+- missing_information
+- recommended_next_check
+- confidence
+- promotion_eligibility
+- final_finding_allowed
+- notes
+
+Category rules:
+- verified_finding_candidates: only items that appear evidence-backed and potentially promotable to final findings.
+  Include evidence references, reasoning, and missing validation if any. Generic visual claims are not allowed here.
+- engineering_concern_candidates: technically meaningful concerns that are plausible but not yet verified.
+  Include observed evidence, why it matters, what is missing, and recommended next check. Avoid final pass/fail language.
+- blocked_verification_candidates: important checks blocked by missing inputs. Include what is blocked, why it matters,
+  missing input, and how to resolve.
+- datasheet_check_candidates: items where a datasheet should be consulted. Include target refdes/MPN when available,
+  suspected parameter, and reason for check.
+- calculation_candidates: items needing deterministic calculation before conclusion. Include required inputs and
+  calculation type. Do not include invented result values.
+- human_review_candidates: ambiguous or high-risk items needing engineer review. Include focused question and evidence.
+- rejected_or_unsupported_candidates: generic, unsupported, final-style, or unsafe candidate claims that should not proceed.
+
+Required summary counts:
+- verified_finding_candidate_count
+- engineering_concern_candidate_count
+- blocked_verification_candidate_count
+- datasheet_check_candidate_count
+- calculation_candidate_count
+- human_review_candidate_count
+- rejected_or_unsupported_candidate_count
+
+Validation and rejection rules:
+- Generic visual claims such as "routing verified" must not be accepted as verified_finding_candidates.
+- Final-style claims without calculation/evidence must be downgraded to concern/blocked verification or recorded in
+  rejected_or_unsupported_candidates.
+- Candidate records with numeric conclusions must cite deterministic calculation evidence.
+- Candidate records from vision annotations must not be automatically final findings.
+- Missing current must produce blocked_verification_candidate or calculation_candidate, not final current/thermal violation.
+- Missing impedance rules must produce blocked_verification_candidate, not impedance failure.
+
+Good engineering_concern_candidate:
+"Observed apparent V24P0 high-side PMOS/load-switching section. Verify FET Vds, Vgs, gate pull network, transient exposure, and load current. Evidence: schematic/page annotation references Q2/R68/R69/R70 and V24P0/P20 context. Missing: exact gate-source voltage and load current."
+
+Good blocked_verification_candidate:
+"Impedance cannot be verified because stackup evidence lacks impedance rules. Do not report impedance failure. Required input: controlled impedance requirements or fabrication stackup constraints."
+
+Good calculation_candidate:
+"Regulator thermal margin requires deterministic calculation. Required inputs: Vin, Vout, output current, package thermal resistance, ambient assumption, and copper area."
+
+Bad/rejected:
+- "Regulator fails thermal check."
+- "PMOS is incorrectly designed."
+- "Trace violates current density."
+- "3 impedance violations found."
+- "Routing verified."
+"""
         prompt += f"""
 
 Phase 18 full-coverage candidate development instructions:
@@ -1378,11 +1467,13 @@ Do not select only a small sample when more concrete evidence-backed candidates 
 
 Required behavior:
 - Review all Phase 8 through Phase 16 evidence.
+- Write the canonical artifact exports/{project}-candidate-findings.json.
 - Include every concrete, non-duplicative, evidence-supported candidate.
 - Reject unsupported, vague, duplicate, or single-source-overclaimed candidates.
 - Keep rejected candidates in a rejected_candidates section with the rejection reason.
 - Each retained candidate must have concrete citations to generated evidence artifacts.
 - Candidate volume is controlled only by evidence quality, duplication, schema compatibility, and validation requirements.
+{phase18_candidate_category_instructions}
 
 Allowed:
 - Many candidates, if each is evidence-backed.

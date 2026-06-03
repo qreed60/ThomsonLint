@@ -38,6 +38,15 @@ questions. These annotations are not verified findings; they are review
 candidates for later concern generation and must remain separate until a later
 verified-finding gate proves them.
 
+For Phase 18, the canonical candidate artifact remains
+`exports/<project>-candidate-findings.json`. In `balanced` or `engineering`
+profiles, that artifact separates `verified_finding_candidates` from
+`engineering_concern_candidates`, `blocked_verification_candidates`,
+`datasheet_check_candidates`, `calculation_candidates`,
+`human_review_candidates`, and `rejected_or_unsupported_candidates`. These
+categories are pre-final-review classifications only. Engineering concerns and
+blocked verifications are not final findings, and final gates remain strict.
+
 For PR16-PR37, use the explicit topology_ai workflow. PR40 allows `pre01` starts from post-conversion exports:
 
 ```bash

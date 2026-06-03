@@ -417,6 +417,22 @@ def test_full_plan_start_end_limits_and_no_phase_consolidation(tmp_path: Path, m
     assert [row["phase_number"] for row in rows if row["phase_number"] in {18, 19}] == [18, 19]
 
 
+def test_full_plan_phase18_engineering_uses_canonical_candidate_artifact_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_root(tmp_path, monkeypatch)
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "engineering")
+    out_dir = tmp_path / "run"
+    result = phase_driver.main(["TestProject", "--workflow", "full_plan", "--start", "18", "--end", "18", "--dry-run", "--out-dir", str(out_dir)])
+    assert result == 0
+
+    manifest = read_json(out_dir / "full-plan-driver-manifest.json")
+    phase18 = manifest["stage_plan"][0]
+    assert phase18["required_artifacts"] == ["exports/TestProject-candidate-findings.json"]
+    assert "phase-runs/phase-18/candidate-findings.json" not in json.dumps(phase18)
+
+
 def test_prompt_only_writes_prompts_and_does_not_execute_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_root(tmp_path, monkeypatch)
     commands: list[list[str]] = []
