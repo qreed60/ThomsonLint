@@ -120,7 +120,14 @@ def env_value(name: str) -> str | None:
 
 def model_routing_summary() -> dict[str, Any]:
     vision_model = os.environ.get("VISION_MODEL") or os.environ.get("THOMSONLINT_VISION_MODEL")
-    configured = bool(vision_model and "qwen" in vision_model.lower()) or bool(os.environ.get("QWEN_VISION_MODEL"))
+    qwen_configured = bool(os.environ.get("QWEN_VISION_MODEL"))
+    if not qwen_configured:
+        for env_name in ("VISION_MODEL", "THOMSONLINT_VISION_MODEL"):
+            val = os.environ.get(env_name)
+            if val and "qwen" in val.lower():
+                qwen_configured = True
+                break
+    configured = bool(vision_model and "qwen" in vision_model.lower()) or qwen_configured
     return {
         "LLM_BASE_URL": env_value("LLM_BASE_URL"),
         "LLM_MODEL": env_value("LLM_MODEL"),
