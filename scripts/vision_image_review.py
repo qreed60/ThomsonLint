@@ -395,56 +395,217 @@ def expected_image_paths(exports: Path, project: str, expected_ids: list[str]) -
     return results
 
 
-def _ensure_review_record_fields(response: dict[str, Any], source_file: str, kind: str) -> dict[str, Any]:
-    """Deterministically repair missing validation fields from runtime facts."""
-    repaired = False
-    if response.get("page_actually_opened") is None and response.get("actual_image_review_performed") is None:
-        # If the model confirmed visual review was performed, treat it as actually opened.
-        if response.get("visual_review_performed") is True:
-            response["page_actually_opened"] = True
-            response["actual_image_review_performed"] = True
-            repaired = True
-        else:
-            response["page_actually_opened"] = False
-            response["actual_image_review_performed"] = False
-            repaired = True
-
-    if "page_type" not in response or not response.get("page_type"):
-        response["page_type"] = kind if kind in {"schematic", "layout", "gerber"} else "unknown"
-        repaired = True
-
-    if "image_id" not in response or not response.get("image_id"):
-        response["image_id"] = Path(source_file).name
-        repaired = True
-
-    for field in ("errors",):
-        val = response.get(field)
-        if not isinstance(val, list):
-            response[field] = []
-            repaired = True
-
-    for field in ("warnings",):
-        val = response.get(field)
-        if not isinstance(val, list):
-            response[field] = []
-            repaired = True
-
-    return response, repaired
+def _as_bool(value: Any) -> bool | None:
+    if value is True or value is False:
+        return value
+    return None
 
 
-def observation_successful(observation: dict[str, Any]) -> bool:
-    """Check that the persisted review record is valid."""
-    response = observation.get("response")
+def _list_or_empty(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def review_row_validation_errors(row: dict[str, Any], expected_image_ids: set[str] | None = None) -> tuple[list[str], list[str]]:
+    required = [
+        "image_id",
+        "file",
+        "model",
+        "raw_response_path",
+        "retry_count",
+        "repair_applied",
+        "parse_status",
+        "validation_status",
+        "page_actually_opened",
+        "actual_image_review_performed",
+        "validation_errors",
+        "validation_missing_fields",
+        "errors",
+        "warnings",
+        "response",
+    ]
+    missing = [
+        field
+        for field in required
+        if field not in row or row.get(field) is None or (field in {"image_id", "file", "model", "raw_response_path"} and row.get(field) == "")
+    ]
+    errors: list[str] = []
+
+    if row.get("page_actually_opened") is not True:
+        errors.append("page_actually_opened is not true")
+    if row.get("actual_image_review_performed") is not True:
+        errors.append("actual_image_review_performed is not true")
+    if row.get("parse_status") not in {"parsed", "repaired"}:
+        errors.append("parse_status is not parsed or repaired")
+    if row.get("validation_status") != "passed":
+        errors.append("validation_status is not passed")
+
+    response = row.get("response")
     if not isinstance(response, dict):
-        return False
-    # Must have explicit page_actually_opened or actual_image_review_performed
-    opened = response.get("page_actually_opened") or response.get("actual_image_review_performed")
-    if opened is not True:
-        return False
-    return (
-        response.get("visual_review_performed") is True
-        and response.get("confirmation_no_pixel_quantitative_claims") is True
+        errors.append("response is not an object")
+    else:
+        if response.get("visual_review_performed") is not True:
+            errors.append("response.visual_review_performed is not true")
+        if response.get("confirmation_no_pixel_quantitative_claims") is not True:
+            errors.append("response.confirmation_no_pixel_quantitative_claims is not true")
+
+    image_id = str(row.get("image_id") or "")
+    if expected_image_ids is not None and image_id not in expected_image_ids:
+        errors.append("image_id does not match expected inventory image ID")
+
+    return errors, missing
+
+
+def normalize_review_observation(
+    *,
+    image_path: str | Path | None = None,
+    kind: str | None = None,
+    model: str | None = None,
+    response: dict[str, Any] | None = None,
+    raw_response_path: str | None = None,
+    raw_response_paths: list[str] | None = None,
+    retry_count: int | None = None,
+    repair_applied: bool = False,
+    parse_status: str | None = None,
+    runtime_review_performed: bool = False,
+    existing: dict[str, Any] | None = None,
+    expected_image_ids: set[str] | None = None,
+    validation_errors: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return the stable Phase 13 persisted review-row schema."""
+    existing = existing or {}
+    response = response if isinstance(response, dict) else existing.get("response")
+    if not isinstance(response, dict):
+        response = {}
+
+    file_value = str(
+        image_path
+        or existing.get("file")
+        or existing.get("source_file")
+        or existing.get("image_path")
+        or response.get("source_file")
+        or response.get("file")
+        or ""
     )
+    image_id = str(existing.get("image_id") or response.get("image_id") or Path(file_value).name or "")
+    page_type = str(existing.get("page_type") or existing.get("kind") or response.get("page_type") or kind or "unknown")
+    row_kind = str(kind or existing.get("kind") or page_type or "unknown")
+
+    page_number = existing.get("page_number", response.get("page_number"))
+    if not isinstance(page_number, int):
+        page_number = page_number_from_path(file_value or image_id)
+
+    paths = raw_response_paths or existing.get("raw_response_paths")
+    if not isinstance(paths, list):
+        paths = []
+    paths = [str(path) for path in paths if path]
+    raw_path = str(raw_response_path or existing.get("raw_response_path") or (paths[-1] if paths else ""))
+    if raw_path and raw_path not in paths:
+        paths.append(raw_path)
+
+    retry_value = retry_count
+    if retry_value is None:
+        retry_value = existing.get("retry_count", existing.get("retry_count_used"))
+    if not isinstance(retry_value, int):
+        retry_value = 0
+
+    repair_value = bool(existing.get("repair_applied", False) or repair_applied)
+    opened = _as_bool(existing.get("page_actually_opened"))
+    if opened is None:
+        opened = _as_bool(response.get("page_actually_opened"))
+    performed = _as_bool(existing.get("actual_image_review_performed"))
+    if performed is None:
+        performed = _as_bool(response.get("actual_image_review_performed"))
+    if runtime_review_performed:
+        opened = True
+        performed = True
+    elif raw_path and response and (opened is None or performed is None):
+        if response.get("visual_review_performed") is True:
+            opened = True if opened is None else opened
+            performed = True if performed is None else performed
+            repair_value = True
+
+    if opened is None:
+        opened = False
+    if performed is None:
+        performed = False
+
+    status = parse_status or existing.get("parse_status")
+    if status not in {"parsed", "repaired", "failed"}:
+        status = "parsed" if response else "failed"
+    if repair_value and status == "parsed":
+        status = "repaired"
+
+    errors = _list_or_empty(existing.get("errors")) + _list_or_empty(response.get("errors"))
+    warnings = _list_or_empty(existing.get("warnings")) + _list_or_empty(response.get("warnings"))
+    provided_validation_errors = _list_or_empty(existing.get("validation_errors")) + _list_or_empty(validation_errors)
+    provided_missing = _list_or_empty(existing.get("validation_missing_fields"))
+
+    row = {
+        "image_id": image_id,
+        "file": file_value,
+        "source_file": str(existing.get("source_file") or response.get("source_file") or file_value),
+        "page_number": page_number,
+        "page_type": page_type,
+        "kind": row_kind,
+        "model": str(model or existing.get("model") or ""),
+        "raw_response_path": raw_path,
+        "raw_response_paths": paths,
+        "retry_count": retry_value,
+        "retry_count_used": retry_value,
+        "repair_applied": repair_value,
+        "parse_status": status,
+        "validation_status": str(existing.get("validation_status") or "passed"),
+        "page_actually_opened": opened,
+        "actual_image_review_performed": performed,
+        "validation_errors": [],
+        "validation_missing_fields": [],
+        "errors": errors,
+        "warnings": warnings,
+        "response": response,
+    }
+    if isinstance(existing.get("parse_errors"), list):
+        row["parse_errors"] = existing["parse_errors"]
+
+    if row["image_id"] and not response.get("image_id"):
+        response["image_id"] = row["image_id"]
+    if row["source_file"] and not response.get("source_file"):
+        response["source_file"] = row["source_file"]
+    if row["page_number"] is not None and not isinstance(response.get("page_number"), int):
+        response["page_number"] = row["page_number"]
+    if row["page_type"] and not response.get("page_type"):
+        response["page_type"] = row["page_type"]
+    if not isinstance(response.get("errors"), list):
+        response["errors"] = []
+    if not isinstance(response.get("warnings"), list):
+        response["warnings"] = []
+
+    row_errors, missing = review_row_validation_errors(row, expected_image_ids)
+    row["validation_errors"] = unique_strings([str(err) for err in provided_validation_errors + row_errors])
+    row["validation_missing_fields"] = unique_strings([str(field) for field in provided_missing + missing])
+    if row["validation_errors"] or row["validation_missing_fields"] or status == "failed":
+        row["validation_status"] = "failed"
+        if status == "failed":
+            row["parse_status"] = "failed"
+    else:
+        row["validation_status"] = "passed"
+
+    return row
+
+
+def observation_successful(observation: dict[str, Any], expected_image_ids: set[str] | None = None) -> bool:
+    """Check that the persisted review record is valid."""
+    if not isinstance(observation, dict):
+        return False
+    if observation.get("page_actually_opened") is not True:
+        return False
+    if observation.get("actual_image_review_performed") is not True:
+        return False
+    if observation.get("parse_status") not in {"parsed", "repaired"}:
+        return False
+    if observation.get("validation_status") != "passed":
+        return False
+    errors, missing = review_row_validation_errors(observation, expected_image_ids)
+    return not errors and not missing
 
 
 def as_string_list(value: Any) -> list[str]:
@@ -746,7 +907,11 @@ def annotations_artifact_for(
     base_artifact: dict[str, Any],
     expected_image_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    observations = base_artifact.get("per_page_vision_observations", [])
+    observations = [
+        normalize_review_observation(existing=obs, expected_image_ids=set(expected_image_ids) if expected_image_ids else None)
+        for obs in base_artifact.get("per_page_vision_observations", [])
+        if isinstance(obs, dict)
+    ]
     expected_count = base_artifact.get("expected_image_count", 0)
 
     # Build annotations from successful observations
@@ -963,37 +1128,61 @@ def artifact_for(
     expected: int,
     observations: list[dict[str, Any]],
     errors: list[dict[str, Any]],
+    expected_image_ids: list[str] | None = None,
 ) -> dict[str, Any]:
+    expected_id_set = set(expected_image_ids or [])
+    if not expected_id_set:
+        expected_id_set = None
+
     by_file: dict[str, dict[str, Any]] = {}
     ordered_files: list[str] = []
     for observation in observations:
-        file_name = str(observation.get("file") or "")
+        normalized = normalize_review_observation(existing=observation, model=model, expected_image_ids=expected_id_set)
+        file_name = str(normalized.get("file") or "")
         if not file_name:
             continue
         if file_name not in by_file:
             ordered_files.append(file_name)
-        by_file[file_name] = observation
+        by_file[file_name] = normalized
 
     deduped_observations = [by_file[file_name] for file_name in ordered_files]
 
     # Count pages_actually_opened from explicit per-record fields
     pages_actually_opened_count = 0
     reviewed_image_count = 0
-    failed_or_missing_ids: list[str] = []
+    valid_image_ids: list[str] = []
+    invalid_image_ids: list[str] = []
+    invalid_records: list[dict[str, Any]] = []
 
     for obs in deduped_observations:
-        resp = obs.get("response")
-        if not isinstance(resp, dict):
-            continue
-        img_id = str(resp.get("image_id", "")) or Path(str(obs.get("file", ""))).name
-        opened = (resp.get("page_actually_opened") is True) or (resp.get("actual_image_review_performed") is True)
-        if opened:
+        img_id = str(obs.get("image_id") or Path(str(obs.get("file", ""))).name)
+        if obs.get("page_actually_opened") is True:
             pages_actually_opened_count += 1
-        # Check if observation_successful (valid review record)
-        if observation_successful(obs):
+        if observation_successful(obs, expected_id_set):
             reviewed_image_count += 1
+            valid_image_ids.append(img_id)
         else:
-            failed_or_missing_ids.append(img_id)
+            invalid_image_ids.append(img_id)
+            missing_fields = [str(field) for field in obs.get("validation_missing_fields", []) if field]
+            reasons = [str(reason) for reason in obs.get("validation_errors", []) if reason]
+            if not reasons and obs.get("validation_status") != "passed":
+                reasons.append(f"validation_status={obs.get('validation_status')}")
+            invalid_records.append(
+                {
+                    "image_id": img_id,
+                    "reason": "; ".join(reasons) if reasons else "record failed top-level validation",
+                    "missing_fields": missing_fields,
+                    "raw_response_path": str(obs.get("raw_response_path") or ""),
+                }
+            )
+
+    observed_ids = {str(obs.get("image_id") or Path(str(obs.get("file", ""))).name) for obs in deduped_observations}
+    if expected_image_ids:
+        missing_image_ids = [image_id for image_id in expected_image_ids if image_id not in observed_ids]
+    else:
+        missing_count = max(0, expected - len(deduped_observations))
+        missing_image_ids = [f"<missing-image-{idx}>" for idx in range(1, missing_count + 1)]
+    failed_or_missing_ids = invalid_image_ids + missing_image_ids
 
     all_reviewed = expected > 0 and reviewed_image_count == expected and not errors
     all_opened = expected > 0 and pages_actually_opened_count == expected
@@ -1028,6 +1217,10 @@ def artifact_for(
         "expected_image_count": expected,
         "reviewed_image_count": reviewed_image_count,
         "pages_actually_opened_count": pages_actually_opened_count,
+        "valid_image_ids": valid_image_ids,
+        "invalid_image_ids": invalid_image_ids,
+        "missing_image_ids": missing_image_ids,
+        "invalid_records": invalid_records,
         "failed_or_missing_ids": failed_or_missing_ids,
         "vision_review_performed": all_reviewed,
         "metadata_only_review": False,
@@ -1053,6 +1246,7 @@ def write_artifacts(
     expected: int,
     observations: list[dict[str, Any]],
     errors: list[dict[str, Any]],
+    expected_image_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     artifact = artifact_for(
         project=project,
@@ -1061,6 +1255,7 @@ def write_artifacts(
         expected=expected,
         observations=observations,
         errors=errors,
+        expected_image_ids=expected_image_ids,
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1073,6 +1268,10 @@ def write_artifacts(
         "expected_image_count": artifact["expected_image_count"],
         "reviewed_image_count": artifact["reviewed_image_count"],
         "pages_actually_opened_count": artifact["pages_actually_opened_count"],
+        "valid_image_ids": artifact.get("valid_image_ids", []),
+        "invalid_image_ids": artifact.get("invalid_image_ids", []),
+        "missing_image_ids": artifact.get("missing_image_ids", []),
+        "invalid_records": artifact.get("invalid_records", []),
         "failed_or_missing_ids": artifact.get("failed_or_missing_ids", []),
         "phase_13_completed": artifact["phase_13_completed"],
         "overall_pass": artifact["overall_pass"],
@@ -1121,18 +1320,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit and args.limit > 0:
         images = images[: args.limit]
 
-    target_files = {str(path) for _, path in images}
-    target_order = [str(path) for _, path in images]
+    # Determine expected count from canonical inventory when available
+    canonical_ids = expected_image_ids_from_inventory(exports, args.project)
+    images_for_processing = expected_image_paths(exports, args.project, canonical_ids) if canonical_ids else images
+    effective_expected = len(images_for_processing) or len(images)
+    target_files = {str(path) for _, path in (images_for_processing or images)}
+    target_order = [str(path) for _, path in (images_for_processing or images)]
     observations: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
     if args.resume and not args.force:
         previous_observations, previous_errors = load_previous_artifact(out)
-        observations = [
-            obs
-            for obs in previous_observations
-            if str(obs.get("file") or "") in target_files and observation_successful(obs)
-        ]
+        expected_id_set = set(canonical_ids) if canonical_ids else None
+        observations = []
+        for obs in previous_observations:
+            normalized = normalize_review_observation(existing=obs, model=model, expected_image_ids=expected_id_set)
+            if str(normalized.get("file") or "") in target_files and observation_successful(normalized, expected_id_set):
+                observations.append(normalized)
         completed = {str(obs.get("file") or "") for obs in observations}
         errors = [
             err
@@ -1146,11 +1350,6 @@ def main(argv: list[str] | None = None) -> int:
     by_file = {str(obs.get("file") or ""): obs for obs in observations}
     errors = [err for err in errors if str(err.get("file") or "") not in by_file]
 
-    # Determine expected count from canonical inventory when available
-    canonical_ids = expected_image_ids_from_inventory(exports, args.project)
-    images_for_processing = expected_image_paths(exports, args.project, canonical_ids) if canonical_ids else images
-    effective_expected = len(images_for_processing) or len(images)
-
     artifact = write_artifacts(
         out=out,
         project=args.project,
@@ -1159,6 +1358,7 @@ def main(argv: list[str] | None = None) -> int:
         expected=effective_expected,
         observations=observations,
         errors=errors,
+        expected_image_ids=canonical_ids or None,
     )
 
     # Build set of images that have both valid review AND (in balanced/engineering mode) valid annotation
@@ -1166,11 +1366,8 @@ def main(argv: list[str] | None = None) -> int:
     for obs in observations:
         if not isinstance(obs, dict):
             continue
-        resp = obs.get("response")
-        if not isinstance(resp, dict):
-            continue
-        img_id = str(resp.get("image_id", "")) or Path(str(obs.get("file", ""))).name
-        if img_id and observation_successful(obs):
+        img_id = str(obs.get("image_id") or Path(str(obs.get("file", ""))).name)
+        if img_id and observation_successful(obs, set(canonical_ids) if canonical_ids else None):
             completed_image_ids.add(img_id)
 
     # In balanced/engineering mode, also check annotation validity
@@ -1219,23 +1416,26 @@ def main(argv: list[str] | None = None) -> int:
                 raw_out_dir=raw_out_dir,
             )
 
-            # Ensure the response has required validation fields
-            repaired_resp, was_repaired = _ensure_review_record_fields(parsed, path_key, kind)
-            parsed = repaired_resp
-
-            observation = {
-                "file": path_key,
-                "kind": kind,
-                "model": model,
-                **diagnostics,
-                "response": parsed,
-                "repair_applied": was_repaired,
-            }
+            observation = normalize_review_observation(
+                image_path=path,
+                kind=kind,
+                model=model,
+                response=parsed,
+                raw_response_path=diagnostics.get("raw_response_path"),
+                raw_response_paths=diagnostics.get("raw_response_paths"),
+                retry_count=diagnostics.get("retry_count_used"),
+                repair_applied=False,
+                parse_status="parsed",
+                runtime_review_performed=True,
+                existing={"parse_errors": diagnostics.get("parse_errors", [])},
+                expected_image_ids=set(canonical_ids) if canonical_ids else None,
+            )
+            observation["parse_errors"] = diagnostics.get("parse_errors", [])
             by_file[path_key] = observation
             observations = [by_file[file_name] for file_name in target_order if file_name in by_file]
 
             # Check persisted validity before printing PASS
-            is_valid_review = observation_successful(observation)
+            is_valid_review = observation_successful(observation, set(canonical_ids) if canonical_ids else None)
             annotation_ok = True
             if assessment_profile in ("balanced", "engineering"):
                 ann_artifact_path = annotations_out if args.annotations_out else out.parent / f"{args.project}-vision-engineering-annotations.json"
@@ -1269,6 +1469,23 @@ def main(argv: list[str] | None = None) -> int:
                     error.update(details)
             except Exception:
                 pass
+            failed_observation = normalize_review_observation(
+                image_path=path,
+                kind=kind,
+                model=model,
+                response={},
+                raw_response_path=error.get("raw_response_path"),
+                raw_response_paths=error.get("raw_response_paths"),
+                retry_count=error.get("retry_count_used"),
+                repair_applied=False,
+                parse_status="failed",
+                runtime_review_performed=False,
+                validation_errors=[str(error.get("message") or error.get("error") or e)],
+                expected_image_ids=set(canonical_ids) if canonical_ids else None,
+            )
+            failed_observation["parse_errors"] = error.get("parse_errors", [])
+            by_file[path_key] = failed_observation
+            observations = [by_file[file_name] for file_name in target_order if file_name in by_file]
             errors.append(error)
             print(f"FAIL vision review: {path.name}: {e}", file=sys.stderr)
 
@@ -1280,6 +1497,7 @@ def main(argv: list[str] | None = None) -> int:
             expected=effective_expected,
             observations=observations,
             errors=errors,
+            expected_image_ids=canonical_ids or None,
         )
         print(
             f"Progress written: {artifact['reviewed_image_count']}/{artifact['expected_image_count']} "
@@ -1304,9 +1522,10 @@ def main(argv: list[str] | None = None) -> int:
         project=args.project,
         base_url=base_url,
         model=model,
-        expected=len(images),
+        expected=effective_expected,
         observations=observations,
         errors=errors,
+        expected_image_ids=canonical_ids or None,
     )
     print(f"\nWrote {out}")
     print("overall_pass:", artifact["overall_pass"])

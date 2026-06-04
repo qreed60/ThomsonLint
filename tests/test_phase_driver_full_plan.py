@@ -130,12 +130,20 @@ def test_phase13_vision_valid_json_first_try_passes(tmp_path: Path, monkeypatch:
     result, out, raw_out, calls = run_vision_review(tmp_path, monkeypatch, [valid_vision_response()])
 
     artifact = read_json(out)
+    observation = artifact["per_page_vision_observations"][0]
     assert result == 0
     assert artifact["overall_pass"] is True
     assert artifact["phase_13_completed"] is True
     assert artifact["vision_model"] == "kimi_vision"
-    assert artifact["per_page_vision_observations"][0]["retry_count_used"] == 0
-    assert Path(artifact["per_page_vision_observations"][0]["raw_response_path"]).is_file()
+    assert observation["retry_count_used"] == 0
+    assert observation["retry_count"] == 0
+    assert observation["page_actually_opened"] is True
+    assert observation["actual_image_review_performed"] is True
+    assert observation["parse_status"] == "parsed"
+    assert observation["validation_status"] == "passed"
+    assert observation["validation_errors"] == []
+    assert observation["validation_missing_fields"] == []
+    assert Path(observation["raw_response_path"]).is_file()
     assert list(raw_out.glob("*.attempt1.txt"))
     assert len(calls) == 1
 
@@ -173,6 +181,30 @@ def test_phase13_vision_extra_text_after_complete_json_object_is_parsed(
     assert result == 0
     assert artifact["overall_pass"] is True
     assert artifact["per_page_vision_observations"][0]["response"]["brief_description"] == "complete"
+
+
+def test_phase13_vision_nested_runtime_flags_are_canonicalized_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nested_only = json.dumps(
+        {
+            "visual_review_performed": True,
+            "confirmation_no_pixel_quantitative_claims": True,
+            "page_actually_opened": True,
+            "actual_image_review_performed": True,
+            "brief_description": "nested",
+        }
+    )
+    result, out, _raw_out, _calls = run_vision_review(tmp_path, monkeypatch, [nested_only])
+
+    observation = read_json(out)["per_page_vision_observations"][0]
+    assert result == 0
+    assert observation["page_actually_opened"] is True
+    assert observation["actual_image_review_performed"] is True
+    assert observation["parse_status"] == "parsed"
+    assert observation["validation_status"] == "passed"
+    assert observation["response"]["page_actually_opened"] is True
 
 
 def test_phase13_vision_malformed_after_all_retries_records_error_and_fails(
@@ -221,16 +253,16 @@ def test_phase13_vision_resume_retries_failed_images_and_keeps_successful_ones(
     second = create_phase13_image(exports, project, 2)
     out = tmp_path / "review.json"
     raw_out = tmp_path / "raw"
+    old_raw = raw_out / "kept.attempt1.txt"
+    old_raw.parent.mkdir(parents=True)
+    old_raw.write_text(valid_vision_response("kept"), encoding="utf-8")
     previous = {
         "per_page_vision_observations": [
             {
                 "file": str(first),
                 "kind": "schematic",
                 "model": "kimi_vision",
-                "page_actually_opened": True,
-                "actual_image_review_performed": True,
-                "parse_status": "parsed",
-                "validation_status": "passed",
+                "raw_response_path": str(old_raw),
                 "response": {
                     "visual_review_performed": True,
                     "confirmation_no_pixel_quantitative_claims": True,
@@ -280,6 +312,9 @@ def test_phase13_vision_resume_retries_failed_images_and_keeps_successful_ones(
     assert len(calls) == 1
     assert calls[0]["image_path"] == second
     assert observations[str(first)]["response"]["brief_description"] == "kept"
+    assert observations[str(first)]["page_actually_opened"] is True
+    assert observations[str(first)]["actual_image_review_performed"] is True
+    assert observations[str(first)]["validation_status"] == "passed"
     assert observations[str(second)]["response"]["brief_description"] == "retried"
     assert artifact["errors"] == []
     assert artifact["overall_pass"] is True

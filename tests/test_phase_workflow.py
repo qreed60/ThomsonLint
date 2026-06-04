@@ -903,6 +903,8 @@ def _make_review_observation(file_name: str, page_actually_opened: bool = True) 
         "file": file_name,
         "kind": "schematic",
         "model": "test-model",
+        "raw_response_path": f"raw/{Path(file_name).name}.attempt1.txt",
+        "raw_response_paths": [f"raw/{Path(file_name).name}.attempt1.txt"],
         "response": {
             "image_id": Path(file_name).name,
             "source_file": file_name,
@@ -924,6 +926,8 @@ def _make_failed_observation(file_name: str) -> dict:
         "file": file_name,
         "kind": "schematic",
         "model": "test-model",
+        "raw_response_path": f"raw/{Path(file_name).name}.attempt1.txt",
+        "raw_response_paths": [f"raw/{Path(file_name).name}.attempt1.txt"],
         "response": {
             "image_id": Path(file_name).name,
             "source_file": file_name,
@@ -980,6 +984,8 @@ def test_phase13_completeness_partial_opened_fails(tmp_path: Path) -> None:
     assert artifact["overall_pass"] is False, "Overall pass should be False when not all pages opened"
     assert artifact["phase_13_completed"] is False, "Phase 13 should not be completed"
     assert len(artifact.get("failed_or_missing_ids", [])) > 0, "Should list failed/missing IDs"
+    assert len(artifact["invalid_records"]) == 19
+    assert artifact["missing_image_ids"] == []
 
 
 def test_phase13_completeness_all_opened_passes(tmp_path: Path) -> None:
@@ -1017,6 +1023,96 @@ def test_phase13_completeness_all_opened_passes(tmp_path: Path) -> None:
     assert artifact["pages_actually_opened_count"] == 38, f"Expected pages_actually_opened_count=38, got {artifact['pages_actually_opened_count']}"
     assert artifact["overall_pass"] is True, "Overall pass should be True when all images reviewed and opened"
     assert artifact["phase_13_completed"] is True, "Phase 13 should be completed"
+    assert len(artifact["valid_image_ids"]) == 38
+    assert artifact["invalid_image_ids"] == []
+    assert artifact["invalid_records"] == []
+
+
+def test_phase13_validation_lists_fourteen_invalid_records(tmp_path: Path) -> None:
+    """Review validation with 38 rows and 14 invalid rows explains every invalid record."""
+    import scripts.vision_image_review as vr
+
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    project = "TestProject"
+    _make_inventory(exports, project, 18, 20)
+    canonical_ids = vr.expected_image_ids_from_inventory(exports, project)
+
+    observations = []
+    for idx, img_id in enumerate(canonical_ids):
+        observations.append(_make_review_observation(img_id, page_actually_opened=idx >= 14))
+
+    artifact = vr.artifact_for(
+        project=project,
+        base_url="http://test",
+        model="test-model",
+        expected=38,
+        observations=observations,
+        errors=[],
+        expected_image_ids=canonical_ids,
+    )
+
+    assert artifact["overall_pass"] is False
+    assert artifact["reviewed_image_count"] == 24
+    assert artifact["pages_actually_opened_count"] == 24
+    assert len(artifact["invalid_records"]) == 14
+    assert len(artifact["invalid_image_ids"]) == 14
+    assert artifact["missing_image_ids"] == []
+    assert all(record["reason"] for record in artifact["invalid_records"])
+
+
+def test_phase13_validation_gap_is_explained_by_missing_ids(tmp_path: Path) -> None:
+    """A reviewed-count gap must be represented in missing_image_ids or invalid_records."""
+    import scripts.vision_image_review as vr
+
+    observations = [_make_review_observation(f"TestProject-img-sch-p{i}.png") for i in range(1, 25)]
+
+    artifact = vr.artifact_for(
+        project="TestProject",
+        base_url="http://test",
+        model="test-model",
+        expected=38,
+        observations=observations,
+        errors=[],
+    )
+
+    assert artifact["overall_pass"] is False
+    assert artifact["reviewed_image_count"] == 24
+    assert artifact["reviewed_image_count"] < artifact["expected_image_count"]
+    assert artifact["missing_image_ids"] or artifact["invalid_records"]
+    assert len(artifact["missing_image_ids"]) == 14
+
+
+def test_phase13_annotation_repair_warnings_do_not_invalidate_base_review(tmp_path: Path) -> None:
+    """Engineering annotation repair warnings stay separate from base image review validity."""
+    import scripts.vision_image_review as vr
+
+    project = "TestProject"
+    observation = _make_review_observation(f"{project}-img-sch-p1.png", page_actually_opened=True)
+    observation["response"]["observed_circuits"] = []
+    observation["response"]["observed_refdes"] = []
+    observation["response"]["observed_nets"] = []
+    artifact = vr.artifact_for(
+        project=project,
+        base_url="http://test",
+        model="test-model",
+        expected=1,
+        observations=[observation],
+        errors=[],
+        expected_image_ids=[f"{project}-img-sch-p1.png"],
+    )
+
+    annotations = vr.annotations_artifact_for(
+        project=project,
+        assessment_profile="engineering",
+        base_artifact=artifact,
+        expected_image_ids=[f"{project}-img-sch-p1.png", f"{project}-img-sch-p2.png"],
+    )
+
+    assert artifact["overall_pass"] is True
+    assert artifact["per_page_vision_observations"][0]["validation_status"] == "passed"
+    assert annotations["minimal_repaired_count"] == 1
+    assert annotations["warnings"]
 
 
 def _make_annotations_artifact(
@@ -1189,7 +1285,8 @@ def test_phase13_resume_completeness_aware(tmp_path: Path) -> None:
         if not isinstance(resp, dict):
             continue
         img_id = str(resp.get("image_id", "")) or Path(str(obs.get("file", ""))).name
-        if img_id and vr.observation_successful(obs):
+        normalized = vr.normalize_review_observation(existing=obs)
+        if img_id and vr.observation_successful(normalized):
             # Only count as "complete" for resume purposes if it has rich annotation content
             circuits = resp.get("observed_circuits", [])
             refdes = resp.get("observed_refdes", [])
