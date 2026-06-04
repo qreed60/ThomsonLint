@@ -1078,6 +1078,73 @@ def test_phase13_latest_run_shape_without_nested_self_attestation_passes(tmp_pat
     assert annotations["annotation_count"] == 38
 
 
+def test_phase13_pixel_claim_scan_classifies_forbidden_and_allowed() -> None:
+    import scripts.vision_image_review as vr
+
+    scan = vr.pixel_quantitative_claim_scan(
+        {
+            "brief_description": "Measured trace width as 8 mils from pixels.",
+            "not_verifiable_from_image": [
+                "Trace widths, pad sizes, and board dimensions cannot be inferred from pixels alone.",
+                "No pixel-derived quantitative claim is made.",
+            ],
+        }
+    )
+
+    assert scan["forbidden_pixel_measurement_claims"] == ["Measured trace width as 8 mils from pixels."]
+    assert scan["allowed_pixel_measurement_limitations"] == [
+        "Trace widths, pad sizes, and board dimensions cannot be inferred from pixels alone.",
+        "No pixel-derived quantitative claim is made.",
+    ]
+
+
+def test_phase13_p20_style_pixel_limitation_record_validates(tmp_path: Path) -> None:
+    """Limitation language about pixel-derived metrics must not fail base image review validity."""
+    import scripts.vision_image_review as vr
+
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    project = "TestProject"
+    _make_inventory(exports, project, 0, 20)
+    canonical_ids = vr.expected_image_ids_from_inventory(exports, project)
+    img_id = f"{project}-img-layout-p20.png"
+
+    observations = []
+    for expected_id in canonical_ids:
+        obs = _make_review_observation(expected_id, page_actually_opened=True)
+        obs["page_actually_opened"] = True
+        obs["actual_image_review_performed"] = True
+        obs["parse_status"] = "parsed"
+        obs["validation_status"] = "passed"
+        obs["response"].pop("visual_review_performed", None)
+        obs["response"].pop("confirmation_no_pixel_quantitative_claims", None)
+        obs["response"]["brief_description"] = "Reviewed visible page content without pixel-derived measurements."
+        if expected_id == img_id:
+            limitation = "Trace widths, pad sizes, and board dimensions cannot be inferred from pixels alone"
+            obs["response"]["brief_description"] = limitation
+            obs["response"]["not_verifiable_from_image"] = [
+                limitation,
+                "Clearance cannot be measured without design data",
+            ]
+        observations.append(obs)
+
+    artifact = vr.artifact_for(
+        project=project,
+        base_url="http://test",
+        model="test-model",
+        expected=len(canonical_ids),
+        observations=observations,
+        errors=[],
+        expected_image_ids=canonical_ids,
+    )
+
+    assert artifact["overall_pass"] is True
+    assert artifact["reviewed_image_count"] == len(canonical_ids)
+    assert artifact["pages_actually_opened_count"] == len(canonical_ids)
+    assert artifact["invalid_image_ids"] == []
+    assert artifact["invalid_records"] == []
+
+
 def test_phase13_validation_lists_fourteen_invalid_records(tmp_path: Path) -> None:
     """Review validation with 38 rows and 14 invalid rows explains every invalid record."""
     import scripts.vision_image_review as vr

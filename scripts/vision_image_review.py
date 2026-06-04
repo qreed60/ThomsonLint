@@ -427,21 +427,38 @@ SELF_ATTESTATION_VALIDATION_ERRORS = {
 }
 PIXEL_QUANTITATIVE_PATTERNS = [
     re.compile(
-        r"\b(?:trace\s+width|clearance|creepage|pad\s+size|hole\s+size|via\s+(?:diameter|size)|"
-        r"component\s+spacing|spacing|board\s+(?:width|height|dimension)|layer\s+thickness)\b"
+        r"\b(?:trace\s+widths?|clearance|creepage|pad\s+(?:sizes?|diameters?)|hole\s+sizes?|via\s+(?:diameters?|sizes?)|"
+        r"component\s+spacing|spacing|board\s+(?:width|height|dimensions?)|layer\s+thickness)\b"
         r"[^.]{0,80}\b\d+(?:\.\d+)?\s*(?:mil|mils|mm|um|µm|micron|microns|inch|inches|in)\b",
         re.IGNORECASE,
     ),
     re.compile(
         r"\b\d+(?:\.\d+)?\s*(?:mil|mils|mm|um|µm|micron|microns|inch|inches|in)\b"
-        r"[^.]{0,80}\b(?:trace\s+width|clearance|creepage|pad\s+size|hole\s+size|via\s+(?:diameter|size)|"
-        r"component\s+spacing|spacing|board\s+(?:width|height|dimension)|layer\s+thickness)\b",
+        r"[^.]{0,80}\b(?:trace\s+widths?|clearance|creepage|pad\s+(?:sizes?|diameters?)|hole\s+sizes?|via\s+(?:diameters?|sizes?)|"
+        r"component\s+spacing|spacing|board\s+(?:width|height|dimensions?)|layer\s+thickness)\b",
         re.IGNORECASE,
     ),
     re.compile(
         r"\b(?:measured|estimated|inferred|calculated)\b[^.]{0,80}\b(?:from|using|by)\b[^.]{0,40}\bpixels?\b",
         re.IGNORECASE,
     ),
+]
+PIXEL_MEASUREMENT_LIMITATION_PATTERNS = [
+    re.compile(
+        r"\b(?:trace\s+widths?|clearance|creepage|pad\s+(?:sizes?|diameters?)|hole\s+sizes?|via\s+(?:diameters?|sizes?)|"
+        r"component\s+spacing|spacing|board\s+(?:width|height|dimensions?)|layer\s+thickness)\b"
+        r"[^.]{0,100}\b(?:cannot|can't|can\s+not|not|without|unable|do\s+not)\b"
+        r"[^.]{0,100}\b(?:infer(?:red)?|determine(?:d)?|verif(?:y|iable)|measure(?:d)?|trust(?:ed)?|derive(?:d)?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:cannot|can't|can\s+not|not|without|unable|do\s+not)\b"
+        r"[^.]{0,100}\b(?:infer(?:red)?|determine(?:d)?|verif(?:y|iable)|measure(?:d)?|trust(?:ed)?|derive(?:d)?)\b"
+        r"[^.]{0,100}\b(?:trace\s+widths?|clearance|creepage|pad\s+(?:sizes?|diameters?)|hole\s+sizes?|via\s+(?:diameters?|sizes?)|"
+        r"component\s+spacing|spacing|board\s+(?:width|height|dimensions?)|layer\s+thickness)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bno\s+pixel-derived\s+quantitative\s+claim\s+is\s+made\b", re.IGNORECASE),
 ]
 
 
@@ -461,15 +478,27 @@ def _response_strings(value: Any) -> list[str]:
     return []
 
 
-def unsupported_pixel_quantitative_claims(response: dict[str, Any]) -> list[str]:
-    claims: list[str] = []
+def pixel_quantitative_claim_scan(response: dict[str, Any]) -> dict[str, list[str]]:
+    forbidden: list[str] = []
+    allowed_limitations: list[str] = []
     for text in _response_strings(response):
         normalized = re.sub(r"\s+", " ", text.strip())
         if not normalized:
             continue
-        if any(pattern.search(normalized) for pattern in PIXEL_QUANTITATIVE_PATTERNS):
-            claims.append(normalized)
-    return unique_strings(claims)
+        is_limitation = any(pattern.search(normalized) for pattern in PIXEL_MEASUREMENT_LIMITATION_PATTERNS)
+        is_measurement_claim = any(pattern.search(normalized) for pattern in PIXEL_QUANTITATIVE_PATTERNS)
+        if is_measurement_claim and not is_limitation:
+            forbidden.append(normalized)
+        elif is_limitation:
+            allowed_limitations.append(normalized)
+    return {
+        "forbidden_pixel_measurement_claims": unique_strings(forbidden),
+        "allowed_pixel_measurement_limitations": unique_strings(allowed_limitations),
+    }
+
+
+def unsupported_pixel_quantitative_claims(response: dict[str, Any]) -> list[str]:
+    return pixel_quantitative_claim_scan(response)["forbidden_pixel_measurement_claims"]
 
 
 def canonical_validation_errors(values: list[Any]) -> list[str]:

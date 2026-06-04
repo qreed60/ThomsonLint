@@ -371,6 +371,69 @@ def test_phase13_unsupported_pixel_quantitative_claim_is_rejected(
     assert any("unsupported pixel-derived quantitative claim detected" in err for err in observation["validation_errors"])
 
 
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "Pad diameter is 0.5 mm from the image.",
+        "Clearance appears to be 6 mils.",
+        "Board dimension is 100 mm based on the screenshot.",
+        "Via diameter is 0.3 mm estimated from pixels.",
+    ],
+)
+def test_phase13_affirmative_pixel_quantitative_claims_are_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    claim: str,
+) -> None:
+    result, out, _raw_out, _calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        [json.dumps({"page_type": "layout", "brief_description": claim})],
+    )
+
+    observation = read_json(out)["per_page_vision_observations"][0]
+    assert result == 2
+    assert observation["validation_status"] == "failed"
+    assert any("unsupported pixel-derived quantitative claim detected" in err for err in observation["validation_errors"])
+
+
+@pytest.mark.parametrize(
+    "limitation",
+    [
+        "Trace widths, pad sizes, and board dimensions cannot be inferred from pixels alone.",
+        "Pad sizes cannot be determined from the image.",
+        "Board dimensions are not verifiable from the image.",
+        "Clearance cannot be measured without design data.",
+        "No pixel-derived quantitative claim is made.",
+    ],
+)
+def test_phase13_pixel_measurement_limitations_are_allowed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limitation: str,
+) -> None:
+    result, out, _raw_out, _calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        [
+            json.dumps(
+                {
+                    "page_type": "layout",
+                    "brief_description": limitation,
+                    "not_verifiable_from_image": [limitation],
+                }
+            )
+        ],
+    )
+
+    artifact = read_json(out)
+    observation = artifact["per_page_vision_observations"][0]
+    assert result == 0
+    assert artifact["overall_pass"] is True
+    assert observation["validation_status"] == "passed"
+    assert observation["validation_errors"] == []
+
+
 def test_phase13_vision_malformed_after_all_retries_records_error_and_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
