@@ -1028,6 +1028,56 @@ def test_phase13_completeness_all_opened_passes(tmp_path: Path) -> None:
     assert artifact["invalid_records"] == []
 
 
+def test_phase13_latest_run_shape_without_nested_self_attestation_passes(tmp_path: Path) -> None:
+    """38 canonical rows with top-level runtime facts pass even without nested model self-attestation."""
+    import scripts.vision_image_review as vr
+
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    project = "TestProject"
+    _make_inventory(exports, project, 18, 20)
+    canonical_ids = vr.expected_image_ids_from_inventory(exports, project)
+
+    observations = []
+    for img_id in canonical_ids:
+        obs = _make_review_observation(img_id, page_actually_opened=True)
+        obs["page_actually_opened"] = True
+        obs["actual_image_review_performed"] = True
+        obs["parse_status"] = "parsed"
+        obs["validation_status"] = "passed"
+        obs["response"].pop("visual_review_performed", None)
+        obs["response"].pop("confirmation_no_pixel_quantitative_claims", None)
+        obs["response"].pop("page_actually_opened", None)
+        obs["response"].pop("actual_image_review_performed", None)
+        obs["response"]["brief_description"] = "Reviewed visible page content without pixel-derived measurements."
+        observations.append(obs)
+
+    artifact = vr.artifact_for(
+        project=project,
+        base_url="http://test",
+        model="test-model",
+        expected=38,
+        observations=observations,
+        errors=[],
+        expected_image_ids=canonical_ids,
+    )
+    annotations = vr.annotations_artifact_for(
+        project=project,
+        assessment_profile="engineering",
+        base_artifact=artifact,
+        expected_image_ids=canonical_ids,
+    )
+
+    assert artifact["overall_pass"] is True
+    assert artifact["phase_13_completed"] is True
+    assert artifact["reviewed_image_count"] == 38
+    assert artifact["pages_actually_opened_count"] == 38
+    assert artifact["invalid_image_ids"] == []
+    assert artifact["missing_image_ids"] == []
+    assert artifact["invalid_records"] == []
+    assert annotations["annotation_count"] == 38
+
+
 def test_phase13_validation_lists_fourteen_invalid_records(tmp_path: Path) -> None:
     """Review validation with 38 rows and 14 invalid rows explains every invalid record."""
     import scripts.vision_image_review as vr

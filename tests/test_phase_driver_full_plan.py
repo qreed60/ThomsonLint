@@ -56,6 +56,23 @@ def engineering_vision_response() -> str:
     )
 
 
+def engineering_vision_response_without_self_attestation() -> str:
+    return json.dumps(
+        {
+            "page_type": "schematic",
+            "brief_description": "Observed an apparent 24 V input and 3.3 V regulator section.",
+            "visible_circuit_blocks": ["24 V input / 3.3 V regulator"],
+            "visible_components_or_refdes": ["U1", "C12", "C13"],
+            "visible_net_labels_or_signal_names": ["24V_IN", "3V3"],
+            "engineering_concern_candidates": [
+                "Observed regulator support components. Verify capacitor requirements from datasheet evidence."
+            ],
+            "not_verifiable_from_image": ["Output load current is not visible in the image."],
+            "confidence": 0.72,
+        }
+    )
+
+
 def create_phase13_image(exports: Path, project: str, page: int = 1) -> Path:
     exports.mkdir(parents=True, exist_ok=True)
     image = exports / f"{project}-img-sch-p{page}.png"
@@ -289,6 +306,69 @@ def test_phase13_vision_nested_runtime_flags_are_canonicalized_before_write(
     assert observation["parse_status"] == "parsed"
     assert observation["validation_status"] == "passed"
     assert observation["response"]["page_actually_opened"] is True
+
+
+def test_phase13_engineering_response_without_self_attestation_is_valid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, out, _raw_out, _calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        [engineering_vision_response_without_self_attestation()],
+    )
+
+    artifact = read_json(out)
+    observation = artifact["per_page_vision_observations"][0]
+    assert result == 0
+    assert artifact["overall_pass"] is True
+    assert observation["page_actually_opened"] is True
+    assert observation["actual_image_review_performed"] is True
+    assert observation["parse_status"] == "parsed"
+    assert observation["validation_status"] == "passed"
+    assert observation["validation_errors"] == []
+    assert "visual_review_performed" not in observation["response"]
+    assert "confirmation_no_pixel_quantitative_claims" not in observation["response"]
+
+
+def test_phase13_missing_nested_self_attestation_does_not_create_validation_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, out, _raw_out, _calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        [json.dumps({"page_type": "layout", "brief_description": "Copper pours and labels are visible."})],
+    )
+
+    observation = read_json(out)["per_page_vision_observations"][0]
+    assert result == 0
+    assert observation["validation_errors"] == []
+
+
+def test_phase13_unsupported_pixel_quantitative_claim_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, out, _raw_out, _calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        [
+            json.dumps(
+                {
+                    "page_type": "layout",
+                    "brief_description": "Measured trace width as 8 mils from pixels on the layout screenshot.",
+                }
+            )
+        ],
+    )
+
+    artifact = read_json(out)
+    observation = artifact["per_page_vision_observations"][0]
+    assert result == 2
+    assert artifact["overall_pass"] is False
+    assert observation["validation_status"] == "failed"
+    assert any("unsupported pixel-derived quantitative claim detected" in err for err in observation["validation_errors"])
 
 
 def test_phase13_vision_malformed_after_all_retries_records_error_and_fails(

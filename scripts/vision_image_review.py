@@ -421,6 +421,65 @@ def _list_or_empty(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+SELF_ATTESTATION_VALIDATION_ERRORS = {
+    "response.visual_review_performed is not true",
+    "response.confirmation_no_pixel_quantitative_claims is not true",
+}
+PIXEL_QUANTITATIVE_PATTERNS = [
+    re.compile(
+        r"\b(?:trace\s+width|clearance|creepage|pad\s+size|hole\s+size|via\s+(?:diameter|size)|"
+        r"component\s+spacing|spacing|board\s+(?:width|height|dimension)|layer\s+thickness)\b"
+        r"[^.]{0,80}\b\d+(?:\.\d+)?\s*(?:mil|mils|mm|um|µm|micron|microns|inch|inches|in)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b\d+(?:\.\d+)?\s*(?:mil|mils|mm|um|µm|micron|microns|inch|inches|in)\b"
+        r"[^.]{0,80}\b(?:trace\s+width|clearance|creepage|pad\s+size|hole\s+size|via\s+(?:diameter|size)|"
+        r"component\s+spacing|spacing|board\s+(?:width|height|dimension)|layer\s+thickness)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:measured|estimated|inferred|calculated)\b[^.]{0,80}\b(?:from|using|by)\b[^.]{0,40}\bpixels?\b",
+        re.IGNORECASE,
+    ),
+]
+
+
+def _response_strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for nested in value.values():
+            strings.extend(_response_strings(nested))
+        return strings
+    if isinstance(value, list):
+        strings: list[str] = []
+        for nested in value:
+            strings.extend(_response_strings(nested))
+        return strings
+    return []
+
+
+def unsupported_pixel_quantitative_claims(response: dict[str, Any]) -> list[str]:
+    claims: list[str] = []
+    for text in _response_strings(response):
+        normalized = re.sub(r"\s+", " ", text.strip())
+        if not normalized:
+            continue
+        if any(pattern.search(normalized) for pattern in PIXEL_QUANTITATIVE_PATTERNS):
+            claims.append(normalized)
+    return unique_strings(claims)
+
+
+def canonical_validation_errors(values: list[Any]) -> list[str]:
+    return [
+        str(value)
+        for value in values
+        if str(value) and str(value) not in SELF_ATTESTATION_VALIDATION_ERRORS
+    ]
+
+
 def review_row_validation_errors(row: dict[str, Any], expected_image_ids: set[str] | None = None) -> tuple[list[str], list[str]]:
     required = [
         "image_id",
@@ -459,10 +518,8 @@ def review_row_validation_errors(row: dict[str, Any], expected_image_ids: set[st
     if not isinstance(response, dict):
         errors.append("response is not an object")
     else:
-        if response.get("visual_review_performed") is not True:
-            errors.append("response.visual_review_performed is not true")
-        if response.get("confirmation_no_pixel_quantitative_claims") is not True:
-            errors.append("response.confirmation_no_pixel_quantitative_claims is not true")
+        for claim in unsupported_pixel_quantitative_claims(response):
+            errors.append(f"unsupported pixel-derived quantitative claim detected: {claim}")
 
     image_id = str(row.get("image_id") or "")
     if expected_image_ids is not None and image_id not in expected_image_ids:
@@ -553,7 +610,9 @@ def normalize_review_observation(
 
     errors = _list_or_empty(existing.get("errors")) + _list_or_empty(response.get("errors"))
     warnings = _list_or_empty(existing.get("warnings")) + _list_or_empty(response.get("warnings"))
-    provided_validation_errors = _list_or_empty(existing.get("validation_errors")) + _list_or_empty(validation_errors)
+    provided_validation_errors = canonical_validation_errors(
+        _list_or_empty(existing.get("validation_errors")) + _list_or_empty(validation_errors)
+    )
     provided_missing = _list_or_empty(existing.get("validation_missing_fields"))
 
     row = {
@@ -570,7 +629,7 @@ def normalize_review_observation(
         "retry_count_used": retry_value,
         "repair_applied": repair_value,
         "parse_status": status,
-        "validation_status": str(existing.get("validation_status") or "passed"),
+        "validation_status": "failed" if status == "failed" else "passed",
         "page_actually_opened": opened,
         "actual_image_review_performed": performed,
         "validation_errors": [],
@@ -1206,10 +1265,13 @@ def artifact_for(
 
     all_reviewed = expected > 0 and reviewed_image_count == expected and not errors
     all_opened = expected > 0 and pages_actually_opened_count == expected
-    all_no_pixel_geometry = (
-        len(deduped_observations) == reviewed_image_count
-        and all(bool(obs.get("response", {}).get("confirmation_no_pixel_quantitative_claims")) for obs in deduped_observations if isinstance(obs.get("response"), dict))
-    )
+    pixel_claim_errors = [
+        error
+        for obs in deduped_observations
+        for error in obs.get("validation_errors", [])
+        if isinstance(error, str) and error.startswith("unsupported pixel-derived quantitative claim detected:")
+    ]
+    all_no_pixel_geometry = len(deduped_observations) == reviewed_image_count and not pixel_claim_errors
 
     # phase_13_completed is true only when every expected image has a valid review record
     phase_13_completed = bool(all_reviewed and all_opened and all_no_pixel_geometry)
