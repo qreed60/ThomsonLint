@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import mimetypes
 import os
 import re
@@ -26,6 +27,7 @@ STRICT_JSON_ONLY_PROMPT = (
     "Return only minified valid JSON. No markdown. No prose. No comments. "
     "No trailing commas. Escape quotes inside strings. Output exactly one JSON object."
 )
+DEFAULT_VISION_TEMPERATURE = 0.1
 ASSESSMENT_PROFILES = {"strict", "balanced", "engineering"}
 ASSESSMENT_ENABLED_PROFILES = {"balanced", "engineering"}
 GENERIC_VISION_CLAIMS = {
@@ -64,6 +66,19 @@ def assessment_enabled(profile: str) -> bool:
     return profile in ASSESSMENT_ENABLED_PROFILES
 
 
+def vision_temperature_from_env() -> float:
+    value = env("VISION_TEMPERATURE")
+    if value is None:
+        return DEFAULT_VISION_TEMPERATURE
+    try:
+        temperature = float(value)
+    except ValueError as exc:
+        raise SystemExit("Invalid VISION_TEMPERATURE: expected numeric value from 0.0 to 2.0") from exc
+    if not math.isfinite(temperature) or temperature < 0.0 or temperature > 2.0:
+        raise SystemExit("Invalid VISION_TEMPERATURE: expected numeric value from 0.0 to 2.0")
+    return temperature
+
+
 def data_uri(path: Path) -> str:
     mime = mimetypes.guess_type(str(path))[0] or "image/png"
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -78,12 +93,13 @@ def post_chat_completion(
     prompt: str,
     timeout: int,
     max_tokens: int,
+    temperature: float = DEFAULT_VISION_TEMPERATURE,
 ) -> str:
     url = base_url.rstrip("/") + "/chat/completions"
 
     payload = {
         "model": model,
-        "temperature": 0.1,
+        "temperature": temperature,
         "max_tokens": max_tokens,
         "messages": [
             {
@@ -994,6 +1010,7 @@ def annotations_artifact_for(
         "project": project,
         "phase": 13,
         "assessment_profile": assessment_profile,
+        "vision_temperature": base_artifact.get("vision_temperature"),
         "overall_pass": not blockers,
         "annotation_count": len(annotations),
         "expected_image_count": expected_count,
@@ -1069,6 +1086,7 @@ def review_image_with_retries(
     prompt: str,
     timeout: int,
     max_tokens: int,
+    temperature: float,
     retries: int,
     raw_out_dir: Path,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1086,6 +1104,7 @@ def review_image_with_retries(
             prompt=attempt_prompt,
             timeout=timeout,
             max_tokens=max_tokens,
+            temperature=temperature,
         )
         raw_path = write_raw_response(raw_out_dir, image_path, attempt, content)
         raw_paths.append(str(raw_path))
@@ -1128,6 +1147,7 @@ def artifact_for(
     expected: int,
     observations: list[dict[str, Any]],
     errors: list[dict[str, Any]],
+    temperature: float = DEFAULT_VISION_TEMPERATURE,
     expected_image_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     expected_id_set = set(expected_image_ids or [])
@@ -1214,6 +1234,7 @@ def artifact_for(
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "vision_base_url": base_url,
         "vision_model": model,
+        "vision_temperature": temperature,
         "expected_image_count": expected,
         "reviewed_image_count": reviewed_image_count,
         "pages_actually_opened_count": pages_actually_opened_count,
@@ -1246,6 +1267,7 @@ def write_artifacts(
     expected: int,
     observations: list[dict[str, Any]],
     errors: list[dict[str, Any]],
+    temperature: float = DEFAULT_VISION_TEMPERATURE,
     expected_image_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     artifact = artifact_for(
@@ -1255,6 +1277,7 @@ def write_artifacts(
         expected=expected,
         observations=observations,
         errors=errors,
+        temperature=temperature,
         expected_image_ids=expected_image_ids,
     )
 
@@ -1311,10 +1334,13 @@ def main(argv: list[str] | None = None) -> int:
     base_url = env("VISION_BASE_URL", env("LLM_BASE_URL"))
     model = env("VISION_MODEL", env("LLM_MODEL"))
     api_key = env("VISION_API_KEY", env("LLM_API_KEY", "local"))
+    temperature = vision_temperature_from_env()
 
     if not base_url or not model:
         print("ERROR: set VISION_BASE_URL and VISION_MODEL, or LLM_BASE_URL and LLM_MODEL", file=sys.stderr)
         return 2
+
+    print(f"VISION_TEMPERATURE={temperature:g}")
 
     images = list_images(exports, args.project)
     if args.limit and args.limit > 0:
@@ -1358,6 +1384,7 @@ def main(argv: list[str] | None = None) -> int:
         expected=effective_expected,
         observations=observations,
         errors=errors,
+        temperature=temperature,
         expected_image_ids=canonical_ids or None,
     )
 
@@ -1412,6 +1439,7 @@ def main(argv: list[str] | None = None) -> int:
                 prompt=prompt_for(path, kind, assessment_profile),
                 timeout=args.timeout,
                 max_tokens=args.max_tokens,
+                temperature=temperature,
                 retries=args.retries,
                 raw_out_dir=raw_out_dir,
             )
@@ -1497,6 +1525,7 @@ def main(argv: list[str] | None = None) -> int:
             expected=effective_expected,
             observations=observations,
             errors=errors,
+            temperature=temperature,
             expected_image_ids=canonical_ids or None,
         )
         print(
@@ -1525,6 +1554,7 @@ def main(argv: list[str] | None = None) -> int:
         expected=effective_expected,
         observations=observations,
         errors=errors,
+        temperature=temperature,
         expected_image_ids=canonical_ids or None,
     )
     print(f"\nWrote {out}")

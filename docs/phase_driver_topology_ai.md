@@ -38,6 +38,12 @@ questions. These annotations are not verified findings; they are review
 candidates for later concern generation and must remain separate until a later
 verified-finding gate proves them.
 
+Phase 13 local vision review uses `VISION_TEMPERATURE` when set. The value must
+be numeric from `0.0` through `2.0`; unset preserves the existing temperature
+default. For Kimi vision/thinking models, run with `VISION_TEMPERATURE=0.8` to
+send that value in the chat/completions request and record it in the review
+artifact metadata.
+
 In balanced/engineering mode Phase 13 requires complete coverage: exactly one
 review record and one annotation record per expected image ID from the
 inventory. If rich engineering annotation content is unavailable or incomplete,

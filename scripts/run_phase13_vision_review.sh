@@ -26,6 +26,11 @@ echo "== Phase 13 local vision review =="
 echo "PROJECT=$PROJECT"
 echo "VISION_MODEL=$VISION_MODEL"
 echo "VISION_BASE_URL=$VISION_BASE_URL"
+if [[ -n "${VISION_TEMPERATURE:-}" ]]; then
+  echo "VISION_TEMPERATURE=$VISION_TEMPERATURE"
+else
+  echo "VISION_TEMPERATURE=0.1"
+fi
 echo "timeout=${TIMEOUT_SECONDS}s max_tokens=$MAX_TOKENS sleep=${SLEEP_SECONDS}s resume=$RESUME force=$FORCE"
 
 echo "== Validating image evidence inventory =="

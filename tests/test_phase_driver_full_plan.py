@@ -69,6 +69,7 @@ def run_vision_review(
     responses: list[str],
     *,
     project: str = "TestProject",
+    temperature: str | None = None,
     extra_args: list[str] | None = None,
 ) -> tuple[int, Path, Path, list[dict[str, Any]]]:
     exports = tmp_path / "exports"
@@ -79,6 +80,10 @@ def run_vision_review(
 
     monkeypatch.setenv("VISION_BASE_URL", "http://local/v1")
     monkeypatch.setenv("VISION_MODEL", "kimi_vision")
+    if temperature is None:
+        monkeypatch.delenv("VISION_TEMPERATURE", raising=False)
+    else:
+        monkeypatch.setenv("VISION_TEMPERATURE", temperature)
 
     def fake_post_chat_completion(**kwargs: Any) -> str:
         calls.append(kwargs)
@@ -103,6 +108,85 @@ def run_vision_review(
         args.extend(extra_args)
     result = vision_image_review.main(args)
     return result, out, raw_out, calls
+
+
+def test_phase13_post_chat_completion_default_temperature_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    image = create_phase13_image(tmp_path / "exports", "TestProject")
+    captured: dict[str, Any] = {}
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"choices":[{"message":{"content":"{}"}}]}'
+
+    def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(vision_image_review.urllib.request, "urlopen", fake_urlopen)
+
+    vision_image_review.post_chat_completion(
+        base_url="http://local/v1",
+        api_key="local",
+        model="kimi_vision",
+        image_path=image,
+        prompt="review",
+        timeout=12,
+        max_tokens=34,
+    )
+
+    assert captured["timeout"] == 12
+    assert captured["payload"]["temperature"] == vision_image_review.DEFAULT_VISION_TEMPERATURE
+
+
+def test_phase13_vision_temperature_env_is_sent_and_recorded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, out, _raw_out, calls = run_vision_review(
+        tmp_path,
+        monkeypatch,
+        [valid_vision_response("temperature")],
+        temperature="0.8",
+    )
+
+    artifact = read_json(out)
+    assert result == 0
+    assert calls[0]["temperature"] == 0.8
+    assert artifact["vision_temperature"] == 0.8
+
+
+def test_phase13_invalid_vision_temperature_fails_clearly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exports = tmp_path / "exports"
+    create_phase13_image(exports, "TestProject")
+    monkeypatch.setenv("VISION_BASE_URL", "http://local/v1")
+    monkeypatch.setenv("VISION_MODEL", "kimi_vision")
+    monkeypatch.setenv("VISION_TEMPERATURE", "hot")
+
+    with pytest.raises(SystemExit) as excinfo:
+        vision_image_review.main(
+            [
+                "--project",
+                "TestProject",
+                "--exports",
+                str(exports),
+                "--out",
+                str(tmp_path / "review.json"),
+                "--sleep",
+                "0",
+            ]
+        )
+
+    assert "Invalid VISION_TEMPERATURE" in str(excinfo.value)
 
 
 def write_checkpoint(root: Path, project: str, phase: int, *, passed: bool = True) -> None:
@@ -280,6 +364,7 @@ def test_phase13_vision_resume_retries_failed_images_and_keeps_successful_ones(
     responses = [valid_vision_response("retried")]
     monkeypatch.setenv("VISION_BASE_URL", "http://local/v1")
     monkeypatch.setenv("VISION_MODEL", "kimi_vision")
+    monkeypatch.delenv("VISION_TEMPERATURE", raising=False)
 
     def fake_post_chat_completion(**kwargs: Any) -> str:
         calls.append(kwargs)
