@@ -142,6 +142,34 @@ The phase driver itself does not mutate core topology artifacts. Later PRs may
 produce candidate patches, but those patches must pass deterministic validation
 before any calculation artifacts are regenerated.
 
+## Local Response Generation Profile
+
+The optional local response dry-run wrapper,
+`scripts/run_ai_response_dry_run.sh`, uses
+`scripts/ai_generate_easy_response_batch.py` for topology/datasheet extraction
+responses. That generator uses the repo-local
+`qwen35_2b_non_thinking_text_extraction` request profile:
+
+```json
+{
+  "temperature": 1.0,
+  "top_p": 1.0,
+  "top_k": 20,
+  "min_p": 0.0,
+  "presence_penalty": 2.0,
+  "repetition_penalty": 1.0
+}
+```
+
+This profile is for non-thinking text extraction only. It does not change
+schemas, validators, evidence requirements, import-only behavior, or the rule
+that datasheet ratings/capabilities are not branch operating currents. Verify
+the payload settings without calling a model with:
+
+```bash
+python3 scripts/ai_generate_easy_response_batch.py --print-request-settings
+```
+
 ## Future PRs
 
 - AI extraction result schema.

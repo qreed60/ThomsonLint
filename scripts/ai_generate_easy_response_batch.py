@@ -87,6 +87,16 @@ CURRENT_VALUE_RE = re.compile(
 )
 SUPPLY_SYMBOL_RE = re.compile(r"\b(?:I(?:CC|CCH|CCL|CCLC|DD|Q)|ICC|ICCH|ICCL|ICCLc|IDD|IQ)\b", re.I)
 
+REQUEST_SETTINGS_PROFILE = "qwen35_2b_non_thinking_text_extraction"
+REQUEST_SETTINGS = {
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 2.0,
+    "repetition_penalty": 1.0,
+}
+
 
 def normalize_text(text):
     return re.sub(r"\s+", " ", str(text or "").replace("\uf06d", "μ").replace("\uf057", "Ω")).strip()
@@ -103,13 +113,21 @@ def normalize_unit(unit):
 def read_json(path):
     return json.loads(path.read_text(encoding="utf-8", errors="replace"))
 
-def chat(base_url, api_key, model, messages, max_tokens):
+def request_settings():
+    return {
+        "profile": REQUEST_SETTINGS_PROFILE,
+        **REQUEST_SETTINGS,
+    }
+
+
+def chat(base_url, api_key, model, messages, max_tokens, settings=None):
+    active_settings = REQUEST_SETTINGS if settings is None else settings
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": 0,
         "max_tokens": max_tokens,
         "stream": False,
+        **active_settings,
     }
 
     req = urllib.request.Request(
@@ -1364,11 +1382,21 @@ def convert(packet_dir, easy):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--packet-list", required=True)
-    ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--raw-dir", required=True)
+    ap.add_argument("--packet-list")
+    ap.add_argument("--out-dir")
+    ap.add_argument("--raw-dir")
     ap.add_argument("--max-tokens", type=int, default=2048)
+    ap.add_argument("--print-request-settings", action="store_true")
     args = ap.parse_args()
+
+    settings = request_settings()
+    if args.print_request_settings:
+        print(json.dumps(settings, indent=2, ensure_ascii=False))
+        return
+
+    missing_args = [name for name in ("packet_list", "out_dir", "raw_dir") if not getattr(args, name)]
+    if missing_args:
+        ap.error("--packet-list, --out-dir, and --raw-dir are required unless --print-request-settings is used")
 
     base_url = os.environ["OPENAI_BASE_URL"]
     api_key = os.environ.get("OPENAI_API_KEY", "lm-studio")
@@ -1378,6 +1406,8 @@ def main():
     raw_dir = Path(args.raw_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
+    print("REQUEST_SETTINGS_PROFILE", settings["profile"], flush=True)
+    print("REQUEST_SETTINGS", json.dumps(settings, sort_keys=True), flush=True)
 
     packet_dirs = [
         Path(x.strip())
@@ -1402,7 +1432,7 @@ def main():
 
         for attempt in range(1, 4):
             try:
-                content = chat(base_url, api_key, model, messages, args.max_tokens)
+                content = chat(base_url, api_key, model, messages, args.max_tokens, REQUEST_SETTINGS)
                 raw_attempt_path = raw_dir / f"{packet_id}.attempt{attempt}.raw.txt"
                 raw_attempt_path.write_text(content or "", encoding="utf-8")
                 print("  raw_len=", len(content or ""), "raw_head=", repr((content or "")[:300]), flush=True)
@@ -1459,6 +1489,7 @@ def main():
         "packet_count": len(packet_dirs),
         "failed_packet_count": len(failed_packets),
         "failed_packets": failed_packets,
+        "request_settings": settings,
     }
     (raw_dir / "batch-summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     if failed_packets:

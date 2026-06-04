@@ -135,6 +135,70 @@ def assert_schema_linkage(item: dict[str, Any], *, packet_id: str = "12B-001", m
     assert item["confidence"] is not None
 
 
+def test_qwen35_2b_non_thinking_text_extraction_request_settings_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_module()
+    captured: dict[str, Any] = {}
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"choices":[{"message":{"content":"{}"}}]}'
+
+    def fake_urlopen(req: Any, timeout: int) -> FakeResponse:
+        captured["timeout"] = timeout
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+
+    module.chat(
+        "http://example.invalid/v1",
+        "local",
+        "qwen35_2b",
+        [{"role": "system", "content": "json"}, {"role": "user", "content": "packet"}],
+        2048,
+    )
+
+    payload = captured["payload"]
+    assert captured["timeout"] == 900
+    assert module.request_settings()["profile"] == "qwen35_2b_non_thinking_text_extraction"
+    assert payload["model"] == "qwen35_2b"
+    assert payload["temperature"] == 1.0
+    assert payload["top_p"] == 1.0
+    assert payload["top_k"] == 20
+    assert payload["min_p"] == 0.0
+    assert payload["presence_penalty"] == 2.0
+    assert payload["repetition_penalty"] == 1.0
+    assert payload["stream"] is False
+
+
+def test_print_request_settings_smoke() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--print-request-settings"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    settings = json.loads(result.stdout)
+    assert settings == {
+        "profile": "qwen35_2b_non_thinking_text_extraction",
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 2.0,
+        "repetition_penalty": 1.0,
+    }
+
+
 def test_ic_fallback_extracts_representative_supply_current_quotes(tmp_path: Path) -> None:
     quotes = [
         ("ICC supply current, Max 10 uA.", 0.00001),
@@ -558,7 +622,7 @@ def test_batch_generation_continues_after_one_packet_failure(tmp_path: Path, mon
 
     calls = {"12B-001": 0, "12B-002": 0}
 
-    def fake_chat(_base_url: str, _api_key: str, _model: str, messages: list[dict[str, str]], _max_tokens: int) -> str:
+    def fake_chat(_base_url: str, _api_key: str, _model: str, messages: list[dict[str, str]], _max_tokens: int, _settings: dict[str, Any]) -> str:
         prompt = messages[1]["content"]
         packet_id = "12B-001" if "12B-001" in prompt else "12B-002"
         calls[packet_id] += 1
