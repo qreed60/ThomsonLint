@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -208,6 +209,12 @@ def test_phase13_vision_resume_retries_failed_images_and_keeps_successful_ones(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Force strict profile so resume skips successful observations without
+    # requiring an annotation artifact.  Engineering/balanced profiles would
+    # re-process the "successful" image when its annotation is missing, which
+    # would consume the only fake response and break this test.
+    monkeypatch.setenv("THOMSONLINT_ASSESSMENT_PROFILE", "strict")
+
     project = "TestProject"
     exports = tmp_path / "exports"
     first = create_phase13_image(exports, project, 1)
@@ -220,10 +227,17 @@ def test_phase13_vision_resume_retries_failed_images_and_keeps_successful_ones(
                 "file": str(first),
                 "kind": "schematic",
                 "model": "kimi_vision",
+                "page_actually_opened": True,
+                "actual_image_review_performed": True,
+                "parse_status": "parsed",
+                "validation_status": "passed",
                 "response": {
                     "visual_review_performed": True,
                     "confirmation_no_pixel_quantitative_claims": True,
                     "brief_description": "kept",
+                    "page_actually_opened": True,
+                    "actual_image_review_performed": True,
+                    "image_id": Path(first).name,
                 },
             }
         ],
@@ -255,6 +269,10 @@ def test_phase13_vision_resume_retries_failed_images_and_keeps_successful_ones(
             "--resume",
         ]
     )
+
+    # Regression: explicitly verify we control the profile env var and do not
+    # depend on the caller's exported THOMSONLINT_ASSESSMENT_PROFILE.
+    assert os.environ.get("THOMSONLINT_ASSESSMENT_PROFILE") == "strict"
 
     artifact = read_json(out)
     observations = {row["file"]: row for row in artifact["per_page_vision_observations"]}

@@ -38,6 +38,16 @@ questions. These annotations are not verified findings; they are review
 candidates for later concern generation and must remain separate until a later
 verified-finding gate proves them.
 
+In balanced/engineering mode Phase 13 requires complete coverage: exactly one
+review record and one annotation record per expected image ID from the
+inventory. If rich engineering annotation content is unavailable or incomplete,
+a minimal repaired annotation record is written with empty arrays and explicit
+blocked_verification_candidates / not_verifiable_from_image entries. Minimal
+repaired annotations indicate incomplete engineering extraction, not a verified
+finding. The phase passes only when every expected image has both a valid review
+record (page_actually_opened=true) and a valid or minimally-repaired annotation
+record.
+
 For Phase 18, the canonical candidate artifact remains
 `exports/<project>-candidate-findings.json`. In `balanced` or `engineering`
 profiles, that artifact separates `verified_finding_candidates` from

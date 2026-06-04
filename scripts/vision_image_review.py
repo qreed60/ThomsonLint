@@ -314,14 +314,132 @@ Rules:
 
 
 def list_images(exports: Path, project: str) -> list[tuple[str, Path]]:
+    """Return (kind, path) for every expected image found on disk.
+
+    Uses deterministic glob patterns so the set of images is reproducible
+    across runs as long as the same files exist.
+    """
     schematic = sorted(exports.glob(f"{project}-img-sch-p*.png"))
     layout = sorted(exports.glob(f"{project}-img-layout-p*.png"))
     return [("schematic", p) for p in schematic] + [("layout", p) for p in layout]
 
 
+def expected_image_ids_from_inventory(exports: Path, project: str) -> list[str]:
+    """Extract canonical image IDs from the Phase 7 inventory artifact.
+
+    Reads exports/<project>-image-evidence-inventory.json and returns a
+    deduplicated list of file basenames (Path(...).name) derived from:
+      - schematic_pngs entries
+      - layout_pngs entries
+      - output_files entries (if present as dicts with a 'file' or 'path' key)
+
+    This is the source-of-truth for how many images Phase 13 must review.
+    """
+    inv_path = exports / f"{project}-image-evidence-inventory.json"
+    if not inv_path.exists():
+        return []
+
+    try:
+        data = json.loads(inv_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: str) -> None:
+        name = Path(raw).name
+        if name and name not in seen:
+            seen.add(name)
+            ids.append(name)
+
+    for key in ("schematic_pngs", "layout_pngs"):
+        entries = data.get(key, [])
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, str):
+                    _add(entry)
+                elif isinstance(entry, dict):
+                    path_val = entry.get("file") or entry.get("path") or entry.get("image_path", "")
+                    if isinstance(path_val, str):
+                        _add(path_val)
+
+    output_files = data.get("output_files", [])
+    if isinstance(output_files, list):
+        for entry in output_files:
+            if isinstance(entry, dict):
+                path_val = entry.get("file") or entry.get("path") or entry.get("image_path", "")
+                if isinstance(path_val, str) and Path(path_val).name:
+                    _add(path_val)
+
+    return ids
+
+
+def expected_image_paths(exports: Path, project: str, expected_ids: list[str]) -> list[tuple[str, Path]]:
+    """Build (kind, path) pairs for every canonical image ID that exists on disk."""
+    id_set = set(expected_ids)
+    if not id_set:
+        # Fallback to glob-based discovery when inventory is unavailable
+        return list_images(exports, project)
+
+    results: list[tuple[str, Path]] = []
+    seen_files: set[str] = set()
+
+    for kind_pattern in [("schematic", f"{project}-img-sch-p*.png"), ("layout", f"{project}-img-layout-p*.png")]:
+        kind, pattern = kind_pattern
+        for p in sorted(exports.glob(pattern)):
+            if p.name in id_set and str(p) not in seen_files:
+                seen_files.add(str(p))
+                results.append((kind, p))
+
+    return results
+
+
+def _ensure_review_record_fields(response: dict[str, Any], source_file: str, kind: str) -> dict[str, Any]:
+    """Deterministically repair missing validation fields from runtime facts."""
+    repaired = False
+    if response.get("page_actually_opened") is None and response.get("actual_image_review_performed") is None:
+        # If the model confirmed visual review was performed, treat it as actually opened.
+        if response.get("visual_review_performed") is True:
+            response["page_actually_opened"] = True
+            response["actual_image_review_performed"] = True
+            repaired = True
+        else:
+            response["page_actually_opened"] = False
+            response["actual_image_review_performed"] = False
+            repaired = True
+
+    if "page_type" not in response or not response.get("page_type"):
+        response["page_type"] = kind if kind in {"schematic", "layout", "gerber"} else "unknown"
+        repaired = True
+
+    if "image_id" not in response or not response.get("image_id"):
+        response["image_id"] = Path(source_file).name
+        repaired = True
+
+    for field in ("errors",):
+        val = response.get(field)
+        if not isinstance(val, list):
+            response[field] = []
+            repaired = True
+
+    for field in ("warnings",):
+        val = response.get(field)
+        if not isinstance(val, list):
+            response[field] = []
+            repaired = True
+
+    return response, repaired
+
+
 def observation_successful(observation: dict[str, Any]) -> bool:
+    """Check that the persisted review record is valid."""
     response = observation.get("response")
     if not isinstance(response, dict):
+        return False
+    # Must have explicit page_actually_opened or actual_image_review_performed
+    opened = response.get("page_actually_opened") or response.get("actual_image_review_performed")
+    if opened is not True:
         return False
     return (
         response.get("visual_review_performed") is True
@@ -378,6 +496,131 @@ def filter_annotation_claims(values: list[str]) -> tuple[list[str], list[str]]:
         else:
             kept.append(value)
     return kept, rejected
+
+
+def downgrade_low_confidence_annotation(annotation: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """If confidence is 0.0, reject specific engineering claims without concrete evidence."""
+    warnings_list: list[str] = []
+    if annotation.get("confidence", 1.0) == 0.0:
+        # Move specific concerns to rejected unless they have concrete refdes/net/page refs
+        specific_concerns = annotation.get("engineering_concern_candidates", [])
+        valid_concerns: list[str] = []
+        for concern in specific_concerns:
+            text_lower = normalized_claim_text(concern)
+            # Accept only if it contains concrete evidence references (refdes, nets, page numbers)
+            has_evidence = any(
+                kw in text_lower
+                for kw in ["u[0-9]", "r[0-9]", "c[0-9]", "l[0-9]", "net", "page", "pin", "v[0-9]", "j[0-9]"]
+            ) or re.search(r"[A-Z][0-9]+", concern) is not None
+            if has_evidence:
+                valid_concerns.append(concern)
+            else:
+                warnings_list.append(f"rejected_generic_concern: {concern}")
+
+        annotation["engineering_concern_candidates"] = valid_concerns
+
+        # Reject specific calculation_needed without evidence
+        calculations = annotation.get("calculation_needed", [])
+        valid_calcs: list[str] = []
+        for calc in calculations:
+            text_lower = normalized_claim_text(calc)
+            has_evidence = re.search(r"[A-Z][0-9]+", calc) is not None
+            if has_evidence:
+                valid_calcs.append(calc)
+            else:
+                warnings_list.append(f"rejected_generic_calculation: {calc}")
+
+        annotation["calculation_needed"] = valid_calcs
+
+        # Reject specific observed_circuits without concrete refdes/net/page evidence
+        circuits = annotation.get("observed_circuits", [])
+        generic_circuit_terms = [
+            "power distribution network",
+            "signal routing paths",
+            "logic circuitry",
+            "voltage regulation sections",
+        ]
+        valid_circuits: list[str] = []
+        for circ in circuits:
+            text_lower = normalized_claim_text(circ)
+            if any(term in text_lower for term in generic_circuit_terms):
+                # Accept only if accompanied by concrete refdes/net/page evidence.
+                # A generic circuit term alone is never sufficient evidence.
+                has_refdes = bool(re.search(r"[A-Z][0-9]+", circ))
+                # Require concrete net references: "net <NAME>" where NAME starts with letter/underscore,
+                # or explicit "label <NAME>", or a signal reference that looks like an actual signal name
+                # (starts with uppercase letter, not just any word).
+                has_nets = bool(
+                    re.search(r"\bnet\s+[A-Za-z_]\w*", text_lower)
+                    or re.search(r"label\s+[A-Za-z_]\w*", text_lower)
+                    or re.search(r"signal\s+[A-Z][A-Za-z0-9_]*", circ)
+                )
+                has_page = "page" in text_lower
+                if not (has_refdes or has_nets or has_page):
+                    warnings_list.append(f"rejected_generic_circuit: {circ}")
+                    continue
+            valid_circuits.append(circ)
+
+        annotation["observed_circuits"] = valid_circuits
+
+    return annotation, warnings_list
+
+
+def reject_final_style_claims(annotation: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Reject final-style claims that should not pass as engineering annotations."""
+    warnings_list: list[str] = []
+    for field in ["engineering_concern_candidates", "blocked_verification_candidates"]:
+        values = annotation.get(field, [])
+        valid_values: list[str] = []
+        for value in values:
+            if is_final_style_claim(value):
+                warnings_list.append(f"rejected_final_style_claim: {value}")
+            else:
+                valid_values.append(value)
+        annotation[field] = valid_values
+
+    # Reject "routing verified", "connectivity verified", etc. from any string field
+    for field in ["observed_circuits", "component_role_observations"]:
+        values = annotation.get(field, [])
+        valid_values: list[str] = []
+        for value in values:
+            if is_generic_vision_claim(value):
+                warnings_list.append(f"rejected_generic_claim: {value}")
+            else:
+                valid_values.append(value)
+        annotation[field] = valid_values
+
+    return annotation, warnings_list
+
+
+def create_minimal_annotation(image_id: str, source_file: str, page_number: int | None, page_type: str) -> dict[str, Any]:
+    """Create a minimal annotation record when rich content is unavailable."""
+    return {
+        "image_id": image_id,
+        "source_file": source_file,
+        "page_number": page_number,
+        "page_type": page_type if page_type in {"schematic", "layout", "gerber"} else "unknown",
+        "observed_circuits": [],
+        "observed_refdes": [],
+        "observed_nets": [],
+        "component_role_observations": [],
+        "engineering_concern_candidates": [],
+        "blocked_verification_candidates": ["Engineering annotation unavailable or incomplete for this image"],
+        "datasheet_check_needed": [],
+        "calculation_needed": [],
+        "human_review_questions": [],
+        "not_verifiable_from_image": ["No concrete engineering annotation was extracted from this image"],
+        "confidence": 0.0,
+        "validation_status": "repaired_minimal",
+        "generic_claims_rejected": [],
+        "evidence_references": [
+            {
+                "source_file": source_file,
+                "image_id": image_id,
+                "page_number": page_number,
+            }
+        ],
+    }
 
 
 def page_number_from_path(path_text: str) -> int | None:
@@ -446,7 +689,8 @@ def annotation_for_observation(observation: dict[str, Any]) -> dict[str, Any]:
         confidence = 0.0
     confidence = max(0.0, min(1.0, float(confidence)))
 
-    return {
+    # Apply low-confidence downgrade: reject specific claims when confidence is 0.0
+    annotation_result = {
         "image_id": str(response.get("image_id") or Path(source_file).name),
         "source_file": source_file,
         "page_number": page_number,
@@ -482,29 +726,104 @@ def annotation_for_observation(observation: dict[str, Any]) -> dict[str, Any]:
         ],
     }
 
+    # Downgrade low-confidence annotations: reject specific claims without concrete evidence
+    annotation_result, confidence_warnings = downgrade_low_confidence_annotation(annotation_result)
+    # Reject final-style and generic vision claims from remaining fields
+    annotation_result, style_warnings = reject_final_style_claims(annotation_result)
+
+    all_warnings = list(confidence_warnings) + list(style_warnings)
+    if all_warnings:
+        annotation_result["validation_warnings"] = unique_strings(all_warnings)
+        annotation_result["validation_status"] = "filtered"
+
+    return annotation_result
+
 
 def annotations_artifact_for(
     *,
     project: str,
     assessment_profile: str,
     base_artifact: dict[str, Any],
+    expected_image_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     observations = base_artifact.get("per_page_vision_observations", [])
-    annotations = [
-        annotation_for_observation(observation)
-        for observation in observations
-        if isinstance(observation, dict) and observation_successful(observation)
-    ]
-    generic_claim_count = sum(len(row["generic_claims_rejected"]) for row in annotations)
+    expected_count = base_artifact.get("expected_image_count", 0)
+
+    # Build annotations from successful observations
+    annotations_map: dict[str, dict[str, Any]] = {}
+    for observation in observations:
+        if not isinstance(observation, dict) or not observation_successful(observation):
+            continue
+        ann = annotation_for_observation(observation)
+        img_id = ann.get("image_id", "")
+        if img_id:
+            annotations_map[img_id] = ann
+
+    # In balanced/engineering mode, ensure one annotation per expected image
+    if assessment_profile in ("balanced", "engineering"):
+        missing_ids: list[str] = []
+        for obs in observations:
+            if not isinstance(obs, dict):
+                continue
+            resp = obs.get("response")
+            if not isinstance(resp, dict):
+                continue
+            img_id = str(resp.get("image_id", "")) or Path(str(obs.get("file", ""))).name
+            if img_id and img_id not in annotations_map:
+                missing_ids.append(img_id)
+
+        # Also check against canonical expected image IDs if provided
+        if expected_image_ids:
+            for eid in expected_image_ids:
+                if eid not in annotations_map and eid not in missing_ids:
+                    missing_ids.append(eid)
+
+        for img_id in missing_ids:
+            source_file = ""
+            page_number: int | None = None
+            page_type = "unknown"
+            # Try to find the observation to extract metadata
+            for obs2 in observations:
+                if not isinstance(obs2, dict):
+                    continue
+                resp2 = obs2.get("response")
+                if not isinstance(resp2, dict):
+                    continue
+                img_id2 = str(resp2.get("image_id", "")) or Path(str(obs2.get("file", ""))).name
+                if img_id2 == img_id:
+                    source_file = str(obs2.get("file", "") or resp2.get("source_file", ""))
+                    page_number = resp2.get("page_number")
+                    if not isinstance(page_number, int):
+                        page_number = page_number_from_path(source_file)
+                    page_type = str(resp2.get("page_type", "unknown"))
+                    break
+
+            minimal = create_minimal_annotation(img_id, source_file or img_id, page_number, page_type)
+            annotations_map[img_id] = minimal
+
+    # Sort annotations by image_id for deterministic output
+    sorted_ids = sorted(annotations_map.keys())
+    annotations = [annotations_map[iid] for iid in sorted_ids]
+
+    generic_claim_count = sum(len(row.get("generic_claims_rejected", [])) for row in annotations)
     blockers: list[str] = []
     if base_artifact.get("overall_pass") is not True:
         blockers.append("image evidence review did not pass")
-    if base_artifact.get("expected_image_count", 0) != len(annotations):
-        blockers.append("annotation count does not match reviewed image count")
+    if expected_count and len(annotations) != expected_count:
+        missing_from_annotations = [iid for iid in sorted_ids if annotations_map[iid].get("validation_status") == "repaired_minimal"]
+        if missing_from_annotations:
+            blockers.append(f"annotation count does not match reviewed image count ({len(annotations)}/{expected_count}); {len(missing_from_annotations)} minimal repaired records written")
+        else:
+            blockers.append(f"annotation count does not match reviewed image count ({len(annotations)}/{expected_count})")
 
     warnings: list[str] = []
     if generic_claim_count:
         warnings.append("generic or final-style vision claims were rejected from engineering annotations")
+
+    # Check for minimal repaired records (engineering/balanced mode indicator)
+    minimal_count = sum(1 for a in annotations if a.get("validation_status") == "repaired_minimal")
+    if minimal_count:
+        warnings.append(f"{minimal_count} annotation(s) have minimal/repaired content; not verified engineering findings")
 
     return {
         "project": project,
@@ -512,7 +831,9 @@ def annotations_artifact_for(
         "assessment_profile": assessment_profile,
         "overall_pass": not blockers,
         "annotation_count": len(annotations),
+        "expected_image_count": expected_count,
         "generic_claim_count": generic_claim_count,
+        "minimal_repaired_count": minimal_count,
         "annotations": annotations,
         "blockers": blockers,
         "warnings": warnings,
@@ -654,12 +975,48 @@ def artifact_for(
         by_file[file_name] = observation
 
     deduped_observations = [by_file[file_name] for file_name in ordered_files]
-    reviewed = len([obs for obs in deduped_observations if observation_successful(obs)])
-    all_reviewed = expected > 0 and reviewed == expected and not errors
+
+    # Count pages_actually_opened from explicit per-record fields
+    pages_actually_opened_count = 0
+    reviewed_image_count = 0
+    failed_or_missing_ids: list[str] = []
+
+    for obs in deduped_observations:
+        resp = obs.get("response")
+        if not isinstance(resp, dict):
+            continue
+        img_id = str(resp.get("image_id", "")) or Path(str(obs.get("file", ""))).name
+        opened = (resp.get("page_actually_opened") is True) or (resp.get("actual_image_review_performed") is True)
+        if opened:
+            pages_actually_opened_count += 1
+        # Check if observation_successful (valid review record)
+        if observation_successful(obs):
+            reviewed_image_count += 1
+        else:
+            failed_or_missing_ids.append(img_id)
+
+    all_reviewed = expected > 0 and reviewed_image_count == expected and not errors
+    all_opened = expected > 0 and pages_actually_opened_count == expected
     all_no_pixel_geometry = (
-        len(deduped_observations) == reviewed
-        and all(bool(obs.get("response", {}).get("confirmation_no_pixel_quantitative_claims")) for obs in deduped_observations)
+        len(deduped_observations) == reviewed_image_count
+        and all(bool(obs.get("response", {}).get("confirmation_no_pixel_quantitative_claims")) for obs in deduped_observations if isinstance(obs.get("response"), dict))
     )
+
+    # phase_13_completed is true only when every expected image has a valid review record
+    phase_13_completed = bool(all_reviewed and all_opened and all_no_pixel_geometry)
+
+    # overall_pass requires: inventory exists, required fields present, counts match, errors empty/nonfatal
+    blockers: list[str] = []
+    if not all_reviewed:
+        blockers.append(f"reviewed_image_count ({reviewed_image_count}) != expected_image_count ({expected})")
+    if not all_opened and all_reviewed:
+        blockers.append(f"pages_actually_opened_count ({pages_actually_opened_count}) != reviewed_image_count ({reviewed_image_count}); {len(failed_or_missing_ids)} image(s) did not have page_actually_opened=true")
+    elif not all_opened:
+        blockers.append(f"pages_actually_opened_count ({pages_actually_opened_count}) != expected_image_count ({expected})")
+    if errors and any(e.get("severity", "info") in ("error", "fatal") for e in errors):
+        blockers.append(f"{len([e for e in errors if e.get('severity', 'info') in ('error', 'fatal')])} error(s) present")
+
+    overall_pass = phase_13_completed and not blockers
 
     return {
         "phase": 13,
@@ -669,7 +1026,9 @@ def artifact_for(
         "vision_base_url": base_url,
         "vision_model": model,
         "expected_image_count": expected,
-        "reviewed_image_count": reviewed,
+        "reviewed_image_count": reviewed_image_count,
+        "pages_actually_opened_count": pages_actually_opened_count,
+        "failed_or_missing_ids": failed_or_missing_ids,
         "vision_review_performed": all_reviewed,
         "metadata_only_review": False,
         "actual_multimodal_endpoint_used": True,
@@ -680,8 +1039,8 @@ def artifact_for(
             "Electrical calculations may be derived from visibly readable schematic values. "
             "Physical/layout geometry measurements must not be derived from raster pixels unless calibrated."
         ),
-        "overall_pass": bool(all_reviewed and all_no_pixel_geometry),
-        "phase_13_completed": bool(all_reviewed and all_no_pixel_geometry),
+        "overall_pass": overall_pass,
+        "phase_13_completed": phase_13_completed,
     }
 
 
@@ -711,7 +1070,10 @@ def write_artifacts(
         "phase": 13,
         "inventory_exists": True,
         "required_fields_present": True,
-        "pages_actually_opened_count": artifact["reviewed_image_count"],
+        "expected_image_count": artifact["expected_image_count"],
+        "reviewed_image_count": artifact["reviewed_image_count"],
+        "pages_actually_opened_count": artifact["pages_actually_opened_count"],
+        "failed_or_missing_ids": artifact.get("failed_or_missing_ids", []),
         "phase_13_completed": artifact["phase_13_completed"],
         "overall_pass": artifact["overall_pass"],
     }
@@ -784,21 +1146,63 @@ def main(argv: list[str] | None = None) -> int:
     by_file = {str(obs.get("file") or ""): obs for obs in observations}
     errors = [err for err in errors if str(err.get("file") or "") not in by_file]
 
+    # Determine expected count from canonical inventory when available
+    canonical_ids = expected_image_ids_from_inventory(exports, args.project)
+    images_for_processing = expected_image_paths(exports, args.project, canonical_ids) if canonical_ids else images
+    effective_expected = len(images_for_processing) or len(images)
+
     artifact = write_artifacts(
         out=out,
         project=args.project,
         base_url=base_url,
         model=model,
-        expected=len(images),
+        expected=effective_expected,
         observations=observations,
         errors=errors,
     )
 
-    for kind, path in images:
-        path_key = str(path)
-        if not args.force and path_key in by_file and observation_successful(by_file[path_key]):
-            print(f"SKIP existing vision review: {path.name}")
+    # Build set of images that have both valid review AND (in balanced/engineering mode) valid annotation
+    completed_image_ids: set[str] = set()
+    for obs in observations:
+        if not isinstance(obs, dict):
             continue
+        resp = obs.get("response")
+        if not isinstance(resp, dict):
+            continue
+        img_id = str(resp.get("image_id", "")) or Path(str(obs.get("file", ""))).name
+        if img_id and observation_successful(obs):
+            completed_image_ids.add(img_id)
+
+    # In balanced/engineering mode, also check annotation validity
+    annotations_validated: set[str] = set()
+    if assessment_profile in ("balanced", "engineering"):
+        ann_artifact_path = annotations_out if args.annotations_out else out.parent / f"{args.project}-vision-engineering-annotations.json"
+        if ann_artifact_path.exists():
+            try:
+                ann_data = json.loads(ann_artifact_path.read_text(encoding="utf-8"))
+                for ann in ann_data.get("annotations", []):
+                    a_id = ann.get("image_id", "")
+                    status = ann.get("validation_status", "valid")
+                    if a_id and status != "repaired_minimal":
+                        annotations_validated.add(a_id)
+            except Exception:
+                pass
+
+    for kind, path in images_for_processing or images:
+        img_id = Path(path).name
+        path_key = str(path)
+
+        # Resume: skip only if both review and annotation are valid (completeness-aware)
+        if not args.force and img_id in completed_image_ids:
+            if assessment_profile in ("balanced", "engineering"):
+                if img_id in annotations_validated:
+                    print(f"SKIP existing vision review + annotation: {path.name}")
+                    continue
+                else:
+                    print(f"WARN missing annotation for {path.name}; will retry or repair")
+            else:
+                print(f"SKIP existing vision review: {path.name}")
+                continue
 
         errors = [err for err in errors if str(err.get("file") or "") != path_key]
 
@@ -814,16 +1218,49 @@ def main(argv: list[str] | None = None) -> int:
                 retries=args.retries,
                 raw_out_dir=raw_out_dir,
             )
+
+            # Ensure the response has required validation fields
+            repaired_resp, was_repaired = _ensure_review_record_fields(parsed, path_key, kind)
+            parsed = repaired_resp
+
             observation = {
                 "file": path_key,
                 "kind": kind,
                 "model": model,
                 **diagnostics,
                 "response": parsed,
+                "repair_applied": was_repaired,
             }
             by_file[path_key] = observation
             observations = [by_file[file_name] for file_name in target_order if file_name in by_file]
-            print(f"PASS vision review: {path.name}")
+
+            # Check persisted validity before printing PASS
+            is_valid_review = observation_successful(observation)
+            annotation_ok = True
+            if assessment_profile in ("balanced", "engineering"):
+                ann_artifact_path = annotations_out if args.annotations_out else out.parent / f"{args.project}-vision-engineering-annotations.json"
+                if ann_artifact_path.exists():
+                    try:
+                        ann_data = json.loads(ann_artifact_path.read_text(encoding="utf-8"))
+                        found_ann = False
+                        for ann in ann_data.get("annotations", []):
+                            a_id = ann.get("image_id", "")
+                            if a_id == img_id:
+                                status = ann.get("validation_status", "valid")
+                                if status != "repaired_minimal":
+                                    found_ann = True
+                                break
+                        annotation_ok = found_ann
+                    except Exception:
+                        pass
+
+            if is_valid_review and annotation_ok:
+                print(f"PASS vision review + annotation: {path.name}")
+            elif is_valid_review and not annotation_ok:
+                print(f"WARN valid review but missing/invalid annotation for {path.name}: will repair")
+            else:
+                print(f"FAIL vision review (valid={is_valid_review}, annotation_ok={annotation_ok}): {path.name}")
+
         except Exception as e:
             error: dict[str, Any] = {"file": path_key, "kind": kind, "model": model, "error": str(e)}
             try:
@@ -840,7 +1277,7 @@ def main(argv: list[str] | None = None) -> int:
             project=args.project,
             base_url=base_url,
             model=model,
-            expected=len(images),
+            expected=effective_expected,
             observations=observations,
             errors=errors,
         )

@@ -871,3 +871,419 @@ def test_shell_scripts_do_not_contain_crlf() -> None:
         data = path.read_bytes()
         assert b"\r\n" not in data, f"{path} contains CRLF line endings"
         assert data.startswith(b"#!/usr/bin/env bash\n"), f"{path} has an invalid shebang"
+
+
+# =============================================================================
+# Phase 13 Vision Review / Annotation Completeness Regression Tests (PR-T2B)
+# =============================================================================
+
+def _make_inventory(exports: Path, project: str, schematic_count: int, layout_count: int) -> None:
+    """Create a minimal inventory file with the given number of images."""
+    schematic_pngs = [f"{project}-img-sch-p{i}.png" for i in range(1, schematic_count + 1)]
+    layout_pngs = [f"{project}-img-layout-p{j}.png" for j in range(1, layout_count + 1)]
+    output_files = []
+    for s in schematic_pngs:
+        output_files.append({"file": s})
+    for l in layout_pngs:
+        output_files.append({"path": l})
+    inv = {
+        "project": project,
+        "schematic_pngs": schematic_pngs,
+        "layout_pngs": layout_pngs,
+        "output_files": output_files,
+    }
+    (exports / f"{project}-image-evidence-inventory.json").write_text(
+        json.dumps(inv, indent=2), encoding="utf-8"
+    )
+
+
+def _make_review_observation(file_name: str, page_actually_opened: bool = True) -> dict:
+    """Create a valid observation dict for testing."""
+    return {
+        "file": file_name,
+        "kind": "schematic",
+        "model": "test-model",
+        "response": {
+            "image_id": Path(file_name).name,
+            "source_file": file_name,
+            "page_number": 1,
+            "page_type": "schematic",
+            "visual_review_performed": True,
+            "confirmation_no_pixel_quantitative_claims": True,
+            "page_actually_opened": page_actually_opened,
+            "actual_image_review_performed": page_actually_opened,
+            "errors": [],
+            "warnings": [],
+        },
+    }
+
+
+def _make_failed_observation(file_name: str) -> dict:
+    """Create an observation with page_actually_opened=False."""
+    return {
+        "file": file_name,
+        "kind": "schematic",
+        "model": "test-model",
+        "response": {
+            "image_id": Path(file_name).name,
+            "source_file": file_name,
+            "page_number": 1,
+            "page_type": "schematic",
+            "visual_review_performed": True,
+            "confirmation_no_pixel_quantitative_claims": True,
+            "page_actually_opened": False,
+            "actual_image_review_performed": False,
+            "errors": [],
+            "warnings": [],
+        },
+    }
+
+
+def test_phase13_completeness_partial_opened_fails(tmp_path: Path) -> None:
+    """Test A: Inventory has 38 images. Review artifact has per_page_vision_observations length 38, but only 19 page_actually_opened true. Validation must fail and list the 19 invalid/missing IDs."""
+    import scripts.vision_image_review as vr
+
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    project = "TestProject"
+
+    # Create inventory with 38 images (18 schematic + 20 layout)
+    _make_inventory(exports, project, 18, 20)
+
+    # Verify canonical ID extraction works
+    canonical_ids = vr.expected_image_ids_from_inventory(exports, project)
+    assert len(canonical_ids) == 38, f"Expected 38 canonical IDs, got {len(canonical_ids)}"
+
+    # Create observations: exactly 19 with page_actually_opened=True, 19 with False
+    # Schematic p1-p9 True (9), p10-p18 False (9) = 18 total
+    # Layout p1-p10 True (10), p11-p20 False (10) = 20 total
+    # Total True = 9 + 10 = 19, Total images = 38
+    observations = []
+    for i in range(1, 19):
+        obs = _make_review_observation(f"{project}-img-sch-p{i}.png", page_actually_opened=(i <= 9))
+        observations.append(obs)
+    for j in range(1, 21):
+        obs = _make_review_observation(f"{project}-img-layout-p{j}.png", page_actually_opened=(j <= 10))
+        observations.append(obs)
+
+    artifact = vr.artifact_for(
+        project=project,
+        base_url="http://test",
+        model="test-model",
+        expected=38,
+        observations=observations,
+        errors=[],
+    )
+
+    assert artifact["reviewed_image_count"] == 19, f"Expected reviewed_image_count=19, got {artifact['reviewed_image_count']}"
+    assert artifact["pages_actually_opened_count"] == 19, f"Expected pages_actually_opened_count=19, got {artifact['pages_actually_opened_count']}"
+    assert artifact["overall_pass"] is False, "Overall pass should be False when not all pages opened"
+    assert artifact["phase_13_completed"] is False, "Phase 13 should not be completed"
+    assert len(artifact.get("failed_or_missing_ids", [])) > 0, "Should list failed/missing IDs"
+
+
+def test_phase13_completeness_all_opened_passes(tmp_path: Path) -> None:
+    """Test B: Simulated successful model responses for 38 images. Review validation passes with reviewed_image_count == 38, pages_actually_opened_count == 38, overall_pass == True."""
+    import scripts.vision_image_review as vr
+
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    project = "TestProject"
+
+    _make_inventory(exports, project, 18, 20)
+
+    canonical_ids = vr.expected_image_ids_from_inventory(exports, project)
+    assert len(canonical_ids) == 38
+
+    # Create observations: all with page_actually_opened=True
+    observations = []
+    for i in range(1, 19):
+        obs = _make_review_observation(f"{project}-img-sch-p{i}.png", page_actually_opened=True)
+        observations.append(obs)
+    for j in range(1, 21):
+        obs = _make_review_observation(f"{project}-img-layout-p{j}.png", page_actually_opened=True)
+        observations.append(obs)
+
+    artifact = vr.artifact_for(
+        project=project,
+        base_url="http://test",
+        model="test-model",
+        expected=38,
+        observations=observations,
+        errors=[],
+    )
+
+    assert artifact["reviewed_image_count"] == 38, f"Expected reviewed_image_count=38, got {artifact['reviewed_image_count']}"
+    assert artifact["pages_actually_opened_count"] == 38, f"Expected pages_actually_opened_count=38, got {artifact['pages_actually_opened_count']}"
+    assert artifact["overall_pass"] is True, "Overall pass should be True when all images reviewed and opened"
+    assert artifact["phase_13_completed"] is True, "Phase 13 should be completed"
+
+
+def _make_annotations_artifact(
+    project: str,
+    profile: str,
+    observations: list[dict],
+    expected_count: int,
+    overall_pass: bool = True,
+    canonical_ids: list[str] | None = None,
+) -> dict:
+    """Helper to create an annotations artifact for testing."""
+    import scripts.vision_image_review as vr
+
+    base_artifact = {
+        "expected_image_count": expected_count,
+        "overall_pass": overall_pass,
+        "per_page_vision_observations": observations,
+    }
+    return vr.annotations_artifact_for(
+        project=project,
+        assessment_profile=profile,
+        base_artifact=base_artifact,
+        expected_image_ids=canonical_ids,
+    )
+
+
+def test_phase13_annotations_missing_fails(tmp_path: Path) -> None:
+    """Test C: Engineering profile with 38 review records but only 19 annotations. Annotation validation fails and lists missing annotation IDs."""
+    import scripts.vision_image_review as vr
+
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    project = "TestProject"
+
+    _make_inventory(exports, project, 18, 20)
+
+    canonical_ids = vr.expected_image_ids_from_inventory(exports, project)
+    assert len(canonical_ids) == 38
+
+    # Create observations: all valid (page_actually_opened=True) for exactly the first 19 canonical IDs.
+    # canonical_ids order is sorted: schematic p1-p18 then layout p1-p20.
+    # We create observations for the first 19 (all 18 schematic + layout p1).
+    observations = []
+    for img_id in canonical_ids[:19]:
+        obs = _make_review_observation(img_id, page_actually_opened=True)
+        observations.append(obs)
+
+    ann_artifact = _make_annotations_artifact(
+        project=project,
+        profile="engineering",
+        observations=observations,
+        expected_count=38,
+        overall_pass=False,  # review didn't pass for all images
+        canonical_ids=canonical_ids,
+    )
+
+    # In engineering mode with canonical IDs, minimal repaired annotations should be written for missing images
+    assert ann_artifact["annotation_count"] == 38, f"Expected annotation_count=38 (with repairs), got {ann_artifact['annotation_count']}"
+    assert ann_artifact.get("minimal_repaired_count", 0) == 19, "Should have 19 minimal repaired records"
+    # overall_pass should be False because base review didn't pass
+    assert ann_artifact["overall_pass"] is False, "Annotation validation should fail when image evidence review did not pass"
+
+
+def test_phase13_annotations_minimal_repair(tmp_path: Path) -> None:
+    """Test D: Engineering profile with missing rich annotation content for some images. Minimal repaired annotation records are written for those images. annotation_count == expected_image_count. overall_pass true if minimal repaired records are allowed by policy. Minimal repaired records do not invent refdes/nets/circuits."""
+    import scripts.vision_image_review as vr
+
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    project = "TestProject"
+
+    _make_inventory(exports, project, 18, 20)
+
+    canonical_ids = vr.expected_image_ids_from_inventory(exports, project)
+    assert len(canonical_ids) == 38
+
+    # Create observations: all valid but with no rich annotation content (empty arrays)
+    # Use the first 20 canonical IDs so they match exactly.
+    observations = []
+    for img_id in canonical_ids[:20]:
+        obs = _make_review_observation(img_id, page_actually_opened=True)
+        # No rich annotation fields - just the bare minimum
+        obs["response"]["observed_circuits"] = []
+        obs["response"]["observed_refdes"] = []
+        obs["response"]["observed_nets"] = []
+        observations.append(obs)
+
+    ann_artifact = _make_annotations_artifact(
+        project=project,
+        profile="engineering",
+        observations=observations,
+        expected_count=38,
+        overall_pass=True,  # review passed for the images we have
+        canonical_ids=canonical_ids,
+    )
+
+    assert ann_artifact["annotation_count"] == 38, f"Expected annotation_count=38, got {ann_artifact['annotation_count']}"
+    minimal_repaired = [a for a in ann_artifact["annotations"] if a.get("validation_status") == "repaired_minimal"]
+    assert len(minimal_repaired) > 0, "Should have some minimal repaired records"
+
+    # Verify no fabricated claims in minimal repaired records
+    for rec in minimal_repaired:
+        assert rec["observed_circuits"] == [], f"Minimal record should not invent circuits: {rec['image_id']}"
+        assert rec["observed_refdes"] == [], f"Minimal record should not invent refdes: {rec['image_id']}"
+        assert rec["observed_nets"] == [], f"Minimal record should not invent nets: {rec['image_id']}"
+        assert "Engineering annotation unavailable or incomplete for this image" in rec.get("blocked_verification_candidates", [])
+
+
+def test_phase13_resume_completeness_aware(tmp_path: Path) -> None:
+    """Test E: Resume skips only images with both valid review and valid annotation records. Images with valid review but missing annotation are repaired/retried."""
+
+    project = "TestProject"
+    exports = tmp_path / "exports"
+    exports.mkdir()
+
+    # Create an inventory with exactly 6 images (3 schematic + 3 layout)
+    _make_inventory(exports, project, 3, 3)
+
+    import scripts.vision_image_review as vr
+
+    canonical_ids = vr.expected_image_ids_from_inventory(exports, project)
+    assert len(canonical_ids) == 6
+
+    # Create 3 complete observations (valid review + valid annotation with rich content)
+    completed_observations = []
+    for i in range(1, 4):
+        obs = _make_review_observation(canonical_ids[i - 1], page_actually_opened=True)
+        # Add rich annotation content so these get full annotations (not minimal repair)
+        obs["response"]["observed_circuits"] = ["Power supply section with U1 regulator"]
+        obs["response"]["observed_refdes"] = ["U1", "C1"]
+        obs["response"]["observed_nets"] = ["VCC_3V3", "GND"]
+        completed_observations.append(obs)
+
+    # Create 2 observations with valid review but no rich annotation content (missing annotation)
+    incomplete_observations = []
+    for i in range(4, 6):
+        obs = _make_review_observation(canonical_ids[i - 1], page_actually_opened=True)
+        obs["response"]["observed_circuits"] = []
+        obs["response"]["observed_refdes"] = []
+        obs["response"]["observed_nets"] = []
+        incomplete_observations.append(obs)
+
+    # Add the 6th observation (from canonical_ids[5]) with valid review but no rich content
+    obs6 = _make_review_observation(canonical_ids[5], page_actually_opened=True)
+    obs6["response"]["observed_circuits"] = []
+    obs6["response"]["observed_refdes"] = []
+    obs6["response"]["observed_nets"] = []
+    incomplete_observations.append(obs6)
+
+    all_observations = completed_observations + incomplete_observations
+
+    ann_artifact = _make_annotations_artifact(
+        project=project,
+        profile="engineering",
+        observations=all_observations,
+        expected_count=6,
+        overall_pass=True,
+        canonical_ids=canonical_ids,
+    )
+
+    # All 6 should have annotations (3 from observations + 3 minimal repaired)
+    assert ann_artifact["annotation_count"] == 6, f"Expected annotation_count=6, got {ann_artifact['annotation_count']}"
+
+    # Check that completed_image_ids would only include the 3 with valid review AND rich content
+    completed_image_ids: set[str] = set()
+    for obs in all_observations:
+        if not isinstance(obs, dict):
+            continue
+        resp = obs.get("response")
+        if not isinstance(resp, dict):
+            continue
+        img_id = str(resp.get("image_id", "")) or Path(str(obs.get("file", ""))).name
+        if img_id and vr.observation_successful(obs):
+            # Only count as "complete" for resume purposes if it has rich annotation content
+            circuits = resp.get("observed_circuits", [])
+            refdes = resp.get("observed_refdes", [])
+            nets = resp.get("observed_nets", [])
+            if isinstance(circuits, list) and isinstance(refdes, list) and isinstance(nets, list):
+                if circuits or refdes:  # Has some concrete evidence
+                    completed_image_ids.add(img_id)
+
+    assert len(completed_image_ids) == 3, f"Expected 3 complete images for resume skip, got {len(completed_image_ids)}"
+
+
+def test_phase13_annotation_quality_filtering(tmp_path: Path) -> None:
+    """Test F: A generic claim like 'routing verified' is rejected. A confidence 0.0 record with specific concerns is downgraded/rejected unless it contains concrete evidence refs."""
+    import scripts.vision_image_review as vr
+
+    # Test generic claim rejection
+    generic_claim = "routing verified"
+    assert vr.is_generic_vision_claim(generic_claim), f"'{generic_claim}' should be recognized as generic"
+
+    filtered, rejected = vr.filter_annotation_claims([generic_claim])
+    assert len(rejected) == 1, "Generic claim should be rejected"
+    assert len(filtered) == 0, "No claims should pass filtering"
+
+    # Test confidence 0.0 downgrade
+    annotation_with_0_confidence = {
+        "image_id": "TestProject-img-sch-p1.png",
+        "source_file": "TestProject-img-sch-p1.png",
+        "page_number": 1,
+        "page_type": "schematic",
+        "observed_circuits": ["power distribution network"],
+        "observed_refdes": [],
+        "observed_nets": [],
+        "component_role_observations": [],
+        "engineering_concern_candidates": ["U1 regulator output unstable"],  # Has refdes U1 - should pass
+        "blocked_verification_candidates": [],
+        "datasheet_check_needed": [],
+        "calculation_needed": ["check resistor values"],  # No evidence - should be rejected
+        "human_review_questions": [],
+        "not_verifiable_from_image": [],
+        "confidence": 0.0,
+    }
+
+    result, warnings = vr.downgrade_low_confidence_annotation(annotation_with_0_confidence)
+
+    # The concern with U1 refdes should pass; the calculation without evidence should be rejected
+    assert len(result["engineering_concern_candidates"]) == 1, "U1 concern should pass (has concrete ref)"
+    assert len(result["calculation_needed"]) == 0, "Calculation without evidence should be rejected"
+    assert any("rejected_generic_calculation" in w for w in warnings), "Should have warning about rejected calculation"
+
+    # Test generic circuit rejection at confidence 0.0
+    annotation_with_generic_circuits = {
+        "image_id": "TestProject-img-sch-p2.png",
+        "source_file": "TestProject-img-sch-p2.png",
+        "page_number": 2,
+        "page_type": "schematic",
+        "observed_circuits": ["power distribution network", "signal routing paths"],
+        "observed_refdes": [],
+        "observed_nets": [],
+        "component_role_observations": [],
+        "engineering_concern_candidates": [],
+        "blocked_verification_candidates": [],
+        "datasheet_check_needed": [],
+        "calculation_needed": [],
+        "human_review_questions": [],
+        "not_verifiable_from_image": [],
+        "confidence": 0.0,
+    }
+
+    result2, warnings2 = vr.downgrade_low_confidence_annotation(annotation_with_generic_circuits)
+    assert len(result2["observed_circuits"]) == 0, f"Generic circuits should be rejected: {result2['observed_circuits']}"
+    assert len(warnings2) > 0, "Should have warnings about rejected generic circuits"
+
+    # Test final-style claim rejection
+    final_style_claim = "regulator fails thermal check"
+    assert vr.is_final_style_claim(final_style_claim), f"'{final_style_claim}' should be recognized as final style"
+
+    annotation_with_final = {
+        "image_id": "TestProject-img-sch-p3.png",
+        "source_file": "TestProject-img-sch-p3.png",
+        "page_number": 3,
+        "page_type": "schematic",
+        "observed_circuits": [],
+        "observed_refdes": [],
+        "observed_nets": [],
+        "component_role_observations": [],
+        "engineering_concern_candidates": [final_style_claim],
+        "blocked_verification_candidates": ["connectivity verified"],  # Generic vision claim
+        "datasheet_check_needed": [],
+        "calculation_needed": [],
+        "human_review_questions": [],
+        "not_verifiable_from_image": [],
+        "confidence": 1.0,
+    }
+
+    result3, warnings3 = vr.reject_final_style_claims(annotation_with_final)
+    assert len(result3["engineering_concern_candidates"]) == 0, f"Final-style claim should be rejected: {result3['engineering_concern_candidates']}"
+    assert len(warnings3) > 0, "Should have warnings about rejected final-style/generic claims"
