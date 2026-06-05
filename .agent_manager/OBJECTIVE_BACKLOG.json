@@ -88,11 +88,21 @@
       "id": "phase13_readonly_review_agent_scaffold",
       "title": "Add read-only review agent scaffold",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 13",
       "risk_level": "medium",
       "write_capable": false,
       "description": "Create structured validation/SQA/security review agent report scaffolding without model or OpenHands execution by default."
+    },
+    {
+      "id": "phase14_scalability_architecture_review_agents",
+      "title": "Add scalability and architecture review agents",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 14",
+      "risk_level": "medium",
+      "write_capable": false,
+      "description": "Extend read-only review scaffolding with scalability and architecture reports while preserving deterministic validation authority."
     }
   ]
 }

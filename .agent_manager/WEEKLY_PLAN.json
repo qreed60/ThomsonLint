@@ -3,8 +3,8 @@
   "week_id": "2026-W23",
   "created_date": "2026-06-05",
   "project_id": "thomsonlint",
-  "current_phase": "Phase 13: read-only review agent scaffold",
-  "primary_goal": "Add structured read-only review agent reports while preserving deterministic validation authority.",
+  "current_phase": "Phase 14: scalability and architecture review agents",
+  "primary_goal": "Add structured scalability and architecture reviews to the read-only review layer.",
   "hard_gates": {
     "no_model_calls": true,
     "no_openhands_execution": true,
@@ -15,11 +15,11 @@
   },
   "objectives": [
     {
-      "id": "phase13_readonly_review_agent_scaffold",
+      "id": "phase14_scalability_architecture_review_agents",
       "priority": 1,
       "status": "active",
-      "description": "Create validation, SQA, and security review report scaffolding with no source writes and no model execution by default.",
-      "success_metric": "Review artifacts are generated, validation includes them, and LangGraph remains pass.",
+      "description": "Create scalability and architecture review artifacts with no source writes and no model execution by default.",
+      "success_metric": "Scalability and architecture reports are generated, included in validation, and LangGraph remains pass.",
       "write_capable": false
     }
   ],
