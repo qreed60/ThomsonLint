@@ -118,11 +118,21 @@
       "id": "phase16_timeboxed_langgraph_loop",
       "title": "Add time-boxed multi-pass LangGraph loop",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 16",
       "risk_level": "high",
       "write_capable": false,
       "description": "Add deterministic 11 PM to 6 AM window policy and bounded multi-pass LangGraph loop without AI/model/OpenHands execution by default."
+    },
+    {
+      "id": "phase16_5_systemd_nightly_launcher",
+      "title": "Add systemd nightly launcher",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 16.5",
+      "risk_level": "medium",
+      "write_capable": false,
+      "description": "Add installable systemd service/timer for the deterministic 11 PM nightly window without enabling source writes or AI execution."
     }
   ]
 }
