@@ -50,7 +50,7 @@
       "id": "phase9_isolated_coder_worktree_scaffold",
       "title": "Prepare isolated coder worktree scaffold",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 9",
       "risk_level": "medium",
       "write_capable": false,
