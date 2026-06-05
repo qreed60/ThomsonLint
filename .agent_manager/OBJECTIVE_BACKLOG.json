@@ -78,11 +78,21 @@
       "id": "phase12_langgraph_migration",
       "title": "Migrate plain runner flow to LangGraph",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 12",
       "risk_level": "high",
       "write_capable": false,
       "description": "Create a checkpoint-capable LangGraph runner that reproduces the existing deterministic artifact flow without OpenHands/model execution."
+    },
+    {
+      "id": "phase13_readonly_review_agent_scaffold",
+      "title": "Add read-only review agent scaffold",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 13",
+      "risk_level": "medium",
+      "write_capable": false,
+      "description": "Create structured validation/SQA/security review agent report scaffolding without model or OpenHands execution by default."
     }
   ]
 }

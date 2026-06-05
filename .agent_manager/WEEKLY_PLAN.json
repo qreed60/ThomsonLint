@@ -3,8 +3,8 @@
   "week_id": "2026-W23",
   "created_date": "2026-06-05",
   "project_id": "thomsonlint",
-  "current_phase": "Phase 12: LangGraph migration",
-  "primary_goal": "Migrate the proven deterministic artifact flow to a checkpoint-capable LangGraph runner without changing behavior.",
+  "current_phase": "Phase 13: read-only review agent scaffold",
+  "primary_goal": "Add structured read-only review agent reports while preserving deterministic validation authority.",
   "hard_gates": {
     "no_model_calls": true,
     "no_openhands_execution": true,
@@ -15,11 +15,11 @@
   },
   "objectives": [
     {
-      "id": "phase12_langgraph_migration",
+      "id": "phase13_readonly_review_agent_scaffold",
       "priority": 1,
       "status": "active",
-      "description": "Create LangGraph runner parity with the existing plain Python flow.",
-      "success_metric": "LangGraph runner produces equivalent artifacts and validation remains pass.",
+      "description": "Create validation, SQA, and security review report scaffolding with no source writes and no model execution by default.",
+      "success_metric": "Review artifacts are generated, validation includes them, and LangGraph remains pass.",
       "write_capable": false
     }
   ],
