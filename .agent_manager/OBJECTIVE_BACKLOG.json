@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "project_id": "thomsonlint",
+  "objectives": [
+    {
+      "id": "phase5_project_state_bootstrap",
+      "title": "Create project-local agent manager state",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 5",
+      "risk_level": "low",
+      "write_capable": false,
+      "allowed_files": [
+        ".agent_manager/README.md",
+        ".agent_manager/PROJECT.md",
+        ".agent_manager/CURRENT_PHASE.md",
+        ".agent_manager/SAFETY_RULES.md",
+        ".agent_manager/WEEKLY_PLAN.json",
+        ".agent_manager/OBJECTIVE_BACKLOG.json"
+      ]
+    },
+    {
+      "id": "phase6_project_metrics_collector",
+      "title": "Collect deterministic project metrics",
+      "priority": 2,
+      "status": "queued",
+      "phase": "Phase 6",
+      "risk_level": "medium",
+      "write_capable": false
+    }
+  ]
+}

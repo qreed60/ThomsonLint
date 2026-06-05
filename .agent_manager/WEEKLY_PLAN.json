@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "week_id": "2026-W23",
+  "created_date": "2026-06-05",
+  "project_id": "thomsonlint",
+  "current_phase": "Phase 5: Project-local control state bootstrap",
+  "primary_goal": "Create project-local control state without running agents.",
+  "hard_gates": {
+    "no_model_calls": true,
+    "no_openhands_execution": true,
+    "no_langgraph_execution": true,
+    "no_source_behavior_changes": true,
+    "no_auto_merge": true,
+    "no_auto_push": true
+  },
+  "objectives": [
+    {
+      "id": "phase5_project_state_bootstrap",
+      "priority": 1,
+      "status": "active",
+      "description": "Create project-local .agent_manager control files.",
+      "write_capable": false
+    },
+    {
+      "id": "phase6_deterministic_metrics_collector",
+      "priority": 2,
+      "status": "queued",
+      "description": "Build read-only deterministic metrics collection.",
+      "write_capable": false
+    }
+  ]
+}
