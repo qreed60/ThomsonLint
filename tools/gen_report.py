@@ -15,6 +15,208 @@ import json
 import os
 import sys
 
+ASSESSMENT_ENABLED_PROFILES = {"balanced", "engineering"}
+CANDIDATE_CATEGORY_TO_SECTION = {
+    "verified_finding_candidates": "verified_findings",
+    "engineering_concern_candidates": "engineering_concerns",
+    "blocked_verification_candidates": "blocked_verifications",
+    "datasheet_check_candidates": "datasheet_checks_needed",
+    "calculation_candidates": "calculations_needed",
+    "human_review_candidates": "human_review_questions",
+    "rejected_or_unsupported_candidates": "rejected_or_unsupported",
+}
+SECTION_TITLES = {
+    "verified_findings": "Verified Findings",
+    "engineering_concerns": "Engineering Concerns",
+    "blocked_verifications": "Blocked Verifications",
+    "datasheet_checks_needed": "Datasheet Checks Needed",
+    "calculations_needed": "Calculations Needed",
+    "human_review_questions": "Human Review Questions",
+    "rejected_or_unsupported": "Rejected / Unsupported Candidates",
+}
+SECTION_INTROS = {
+    "verified_findings": "These are candidates that remain eligible for verified-finding promotion under the existing final gates.",
+    "engineering_concerns": "These are plausible engineering concerns derived from evidence review, vision annotations, datasheet review, or candidate analysis. They are not verified findings.",
+    "blocked_verifications": "These are checks that appear engineering-relevant but cannot be completed because required inputs are missing or untrusted.",
+    "datasheet_checks_needed": "These items need datasheet review before any final finding can be claimed.",
+    "calculations_needed": "These items require deterministic calculation before pass/fail or severity can be claimed.",
+    "human_review_questions": "These are focused questions for engineering review.",
+    "rejected_or_unsupported": "These candidates were retained for diagnostics but should not proceed without stronger evidence.",
+}
+SUMMARY_COUNT_FIELDS = {
+    "verified_findings": "verified_findings_count",
+    "engineering_concerns": "engineering_concerns_count",
+    "blocked_verifications": "blocked_verifications_count",
+    "datasheet_checks_needed": "datasheet_checks_needed_count",
+    "calculations_needed": "calculations_needed_count",
+    "human_review_questions": "human_review_questions_count",
+    "rejected_or_unsupported": "rejected_or_unsupported_count",
+}
+GENERIC_VERIFIED_CLAIMS = {
+    "routing verified",
+    "connectivity verified",
+    "power distribution verified",
+    "layer inspected",
+    "visual inspection passed",
+    "component placement verified",
+}
+FINAL_STYLE_FRAGMENTS = [
+    "fails thermal check",
+    "incorrectly designed",
+    "violates current density",
+    "impedance violation found",
+    "impedance violations found",
+]
+
+
+def assessment_profile_from_env():
+    profile = os.environ.get("THOMSONLINT_ASSESSMENT_PROFILE", "strict").strip().lower() or "strict"
+    if profile not in {"strict", "balanced", "engineering"}:
+        raise ValueError(f"invalid THOMSONLINT_ASSESSMENT_PROFILE: {profile}")
+    return profile
+
+
+def assessment_enabled(profile):
+    return profile in ASSESSMENT_ENABLED_PROFILES
+
+
+def normalized_claim(value):
+    return " ".join(str(value).strip().lower().rstrip(".:;!").split())
+
+
+def candidate_text(candidate):
+    parts = []
+    for field in ("title", "summary", "statement", "description", "engineering_basis", "notes"):
+        value = candidate.get(field)
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, list):
+            parts.extend(str(item) for item in value if item is not None)
+    return " ".join(parts)
+
+
+def string_list(value):
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    return []
+
+
+def candidate_to_report_item(candidate, section_key):
+    title = candidate.get("title") or candidate.get("statement") or candidate.get("candidate_id") or "Candidate"
+    statement = candidate.get("statement") or ""
+    basis = candidate.get("engineering_basis") or ""
+    missing = string_list(candidate.get("missing_information"))
+    next_check = candidate.get("recommended_next_check") or ""
+
+    description_parts = []
+    if statement:
+        description_parts.append(statement)
+    if basis:
+        description_parts.append(f"Basis: {basis}")
+    if missing:
+        description_parts.append("Missing information: " + ", ".join(missing))
+    if next_check:
+        description_parts.append(f"Next check: {next_check}")
+
+    evidence = []
+    for ref in string_list(candidate.get("evidence_refs")) + string_list(candidate.get("source_artifacts")):
+        evidence.append({"note": "Candidate evidence reference", "source": ref})
+
+    return {
+        "summary": title,
+        "description": "\n".join(description_parts),
+        "domain": candidate.get("domain") or SECTION_TITLES[section_key],
+        "rule_id": candidate.get("candidate_id") or candidate.get("candidate_type") or "",
+        "evidence": evidence,
+        "component_id": string_list(candidate.get("observed_refdes")),
+        "net_id": string_list(candidate.get("observed_nets")),
+        "recommended_actions": [next_check] if next_check else [],
+        "candidate_type": candidate.get("candidate_type"),
+        "promotion_eligibility": candidate.get("promotion_eligibility"),
+        "confidence": candidate.get("confidence"),
+    }
+
+
+def validate_verified_candidate(candidate):
+    text = normalized_claim(candidate_text(candidate))
+    if any(claim in text for claim in GENERIC_VERIFIED_CLAIMS):
+        raise ValueError("verified_finding_candidates contains generic visual claim")
+    if any(fragment in text for fragment in FINAL_STYLE_FRAGMENTS):
+        raise ValueError("verified_finding_candidates contains unsupported final-style claim")
+
+
+def build_assessment_report_sections(project, profile, candidate_artifact):
+    if not isinstance(candidate_artifact, dict):
+        raise ValueError("candidate artifact must be a JSON object")
+    if candidate_artifact.get("phase") != 18:
+        raise ValueError("candidate artifact phase must be 18")
+
+    sections = {
+        "project": project,
+        "phase": "report",
+        "assessment_profile": profile,
+        "verified_findings": [],
+        "engineering_concerns": [],
+        "blocked_verifications": [],
+        "datasheet_checks_needed": [],
+        "calculations_needed": [],
+        "human_review_questions": [],
+        "rejected_or_unsupported": [],
+        "summary": {},
+        "warnings": [],
+        "blockers": [],
+    }
+
+    for source_key, section_key in CANDIDATE_CATEGORY_TO_SECTION.items():
+        rows = candidate_artifact.get(source_key)
+        if not isinstance(rows, list):
+            raise ValueError(f"candidate artifact {source_key} must be a list")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError(f"candidate artifact {source_key} rows must be objects")
+            if source_key == "verified_finding_candidates":
+                validate_verified_candidate(row)
+            elif row.get("final_finding_allowed") is True:
+                raise ValueError(f"{source_key} must not set final_finding_allowed true")
+            sections[section_key].append(candidate_to_report_item(row, section_key))
+
+    for section_key, count_field in SUMMARY_COUNT_FIELDS.items():
+        sections["summary"][count_field] = len(sections[section_key])
+
+    if not sections["verified_findings"] and any(
+        sections[key]
+        for key in (
+            "engineering_concerns",
+            "blocked_verifications",
+            "datasheet_checks_needed",
+            "calculations_needed",
+            "human_review_questions",
+        )
+    ):
+        sections["warnings"].append("zero verified findings; engineering assessment sections are preserved separately")
+
+    return sections
+
+
+def empty_assessment_sections(project, profile):
+    return {
+        "project": project,
+        "phase": "report",
+        "assessment_profile": profile,
+        "verified_findings": [],
+        "engineering_concerns": [],
+        "blocked_verifications": [],
+        "datasheet_checks_needed": [],
+        "calculations_needed": [],
+        "human_review_questions": [],
+        "rejected_or_unsupported": [],
+        "summary": {field: 0 for field in SUMMARY_COUNT_FIELDS.values()},
+        "warnings": [],
+        "blockers": [],
+    }
+
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -65,6 +267,7 @@ header .meta { font-size: .85rem; color: #64748b; margin-top: 4px; }
 .badge.Informational { background: #64748b; }
 .badge.Verified { background: #10b981; }
 .badge.Cross { background: #7c3aed; }
+.badge.Review { background: #475569; }
 .rule-id { font-family: monospace; font-size: .82rem; color: #475569; }
 .domain-tag { font-size: .72rem; background: #e2e8f0; color: #475569; padding: 1px 7px; border-radius: 3px; }
 .card-summary { margin-top: 6px; font-size: .92rem; }
@@ -140,13 +343,24 @@ header .meta { font-size: .85rem; color: #64748b; margin-top: 4px; }
   <div id="findings"></div>
   <div id="verifiedSection"></div>
   <div id="crossSection"></div>
+  <div id="assessmentSections"></div>
 </div>
 <script>
 const FINDINGS_DATA = {{FINDINGS_JSON}};
+const ASSESSMENT_DATA = {{ASSESSMENT_JSON}};
 const ISSUES = FINDINGS_DATA.issues || [];
 const VERIFIED = FINDINGS_DATA.verified_checks || [];
 const CROSS = FINDINGS_DATA.cross_checks || [];
 const SOURCES = FINDINGS_DATA.source_documents || [];
+const ASSESSMENT_SECTION_CONFIG = [
+  ["verified_findings", "Verified Findings", "These are candidates that remain eligible for verified-finding promotion under the existing final gates.", "verified"],
+  ["engineering_concerns", "Engineering Concerns", "These are plausible engineering concerns derived from evidence review, vision annotations, datasheet review, or candidate analysis. They are not verified findings.", "concern"],
+  ["blocked_verifications", "Blocked Verifications", "These are checks that appear engineering-relevant but cannot be completed because required inputs are missing or untrusted.", "blocked"],
+  ["datasheet_checks_needed", "Datasheet Checks Needed", "These items need datasheet review before any final finding can be claimed.", "datasheet"],
+  ["calculations_needed", "Calculations Needed", "These items require deterministic calculation before pass/fail or severity can be claimed.", "calculation"],
+  ["human_review_questions", "Human Review Questions", "These are focused questions for engineering review.", "human"],
+  ["rejected_or_unsupported", "Rejected / Unsupported Candidates", "These candidates were retained for diagnostics but should not proceed without stronger evidence.", "rejected"]
+];
 
 const SEVERITY_ORDER = ["Critical", "Major", "Minor", "Advisory", "Informational"];
 const storageKey = "thomsonlint-review-" + FINDINGS_DATA.project_name;
@@ -286,6 +500,7 @@ function render() {
     "Design-wide analyses spanning multiple ontology rules. Read-only.",
     CROSS, "cross"
   );
+  document.getElementById("assessmentSections").innerHTML = renderAssessmentSections();
 }
 
 function attachCardHandlers(card, key) {
@@ -328,6 +543,17 @@ function renderStaticSection(title, intro, items, kind) {
       });
     });
   }, 0);
+  return html;
+}
+
+function renderAssessmentSections() {
+  if (!ASSESSMENT_DATA || !ASSESSMENT_DATA.assessment_profile || ASSESSMENT_DATA.assessment_profile === "strict") return "";
+  let html = "";
+  ASSESSMENT_SECTION_CONFIG.forEach(([key, title, intro, kind]) => {
+    const items = ASSESSMENT_DATA[key] || [];
+    if (!items.length) return;
+    html += renderStaticSection(title, intro, items, "assessment-" + kind);
+  });
   return html;
 }
 
@@ -423,7 +649,7 @@ function buildIssueCard(issue, key, status) {
 function buildStaticCard(item, kind) {
   const details = buildDetails(item);
   const hasDetails = details.length > 0;
-  const badgeLabel = kind === "verified" ? "Verified" : "Cross";
+  const badgeLabel = kind === "verified" ? "Verified" : (kind === "cross" ? "Cross" : "Review");
   return `<div class="card-header">
     <span class="badge ${badgeLabel}">${badgeLabel}</span>
     <span class="rule-id">${esc(ruleIdStr(item.rule_id))}</span>
@@ -471,6 +697,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate an HTML review report from ThomsonLint findings JSON.")
     parser.add_argument("findings_json", help="Path to the findings JSON file.")
     parser.add_argument("--output", default="exports/", help="Output directory (default: exports/).")
+    parser.add_argument("--candidate-findings", default=None, help="Optional path to <project>-candidate-findings.json.")
+    parser.add_argument("--assessment-sections-out", default=None, help="Optional output path for engineering assessment report sections JSON.")
     args = parser.parse_args()
 
     try:
@@ -501,14 +729,36 @@ def main():
         print(f"Schema validation error: {e.message}", file=sys.stderr)
         sys.exit(1)
 
-    findings_json_str = json.dumps(findings, ensure_ascii=False)
-    html = HTML_TEMPLATE.replace("{{PROJECT_NAME}}", findings["project_name"])
-    html = html.replace("{{FINDINGS_JSON}}", findings_json_str)
-
-    os.makedirs(args.output, exist_ok=True)
+    profile = assessment_profile_from_env()
     safe_name = findings["project_name"].replace(" ", "_")
     for ch in r'/\:*?"<>|':
         safe_name = safe_name.replace(ch, "_")
+
+    assessment_sections = empty_assessment_sections(findings["project_name"], profile)
+    if assessment_enabled(profile):
+        candidate_path = args.candidate_findings or os.path.join(args.output, safe_name + "-candidate-findings.json")
+        try:
+            with open(candidate_path) as f:
+                candidate_artifact = json.load(f)
+            assessment_sections = build_assessment_report_sections(findings["project_name"], profile, candidate_artifact)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
+            print(f"Error reading assessment candidate artifact {candidate_path}: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        sections_out = args.assessment_sections_out or os.path.join(args.output, safe_name + "-engineering-assessment-report-sections.json")
+        os.makedirs(os.path.dirname(sections_out) or ".", exist_ok=True)
+        with open(sections_out, "w") as f:
+            json.dump(assessment_sections, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        print(f"Engineering assessment report sections generated: {sections_out}")
+
+    findings_json_str = json.dumps(findings, ensure_ascii=False)
+    assessment_json_str = json.dumps(assessment_sections, ensure_ascii=False)
+    html = HTML_TEMPLATE.replace("{{PROJECT_NAME}}", findings["project_name"])
+    html = html.replace("{{FINDINGS_JSON}}", findings_json_str)
+    html = html.replace("{{ASSESSMENT_JSON}}", assessment_json_str)
+
+    os.makedirs(args.output, exist_ok=True)
     out_name = safe_name + "-review.html"
     out_path = os.path.join(args.output, out_name)
     with open(out_path, "w") as f:

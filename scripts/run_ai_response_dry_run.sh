@@ -50,6 +50,7 @@ echo "PHASE8_DIR=$PHASE8_DIR" | tee -a "$LOG"
 echo "PACKET_ROOT=$PACKET_ROOT" | tee -a "$LOG"
 echo "EVIDENCE_INDEX=$EVIDENCE_INDEX" | tee -a "$LOG"
 echo "MODEL=$MODEL" | tee -a "$LOG"
+python3 scripts/ai_generate_easy_response_batch.py --print-request-settings | tee -a "$LOG"
 
 PACKET_COUNT="$(find "$PACKET_ROOT" -mindepth 2 -maxdepth 2 -name request.json | wc -l)"
 echo "packet_count=$PACKET_COUNT" | tee -a "$LOG"

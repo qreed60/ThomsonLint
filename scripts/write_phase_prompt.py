@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 
@@ -32,6 +33,69 @@ PHASES = {
     22: "Final Summary",
 }
 
+ASSESSMENT_PROFILES = {"strict", "balanced", "engineering"}
+ASSESSMENT_PHASES = set(range(13, 20))
+
+
+def assessment_profile_from_env() -> str:
+    value = os.environ.get("THOMSONLINT_ASSESSMENT_PROFILE", "").strip().lower()
+    if value == "":
+        return "strict"
+    if value not in ASSESSMENT_PROFILES:
+        raise SystemExit(
+            "Invalid THOMSONLINT_ASSESSMENT_PROFILE: "
+            f"{value!r}. Expected one of: balanced, engineering, strict."
+        )
+    return value
+
+
+def engineering_assessment_prompt(phase: int, profile: str) -> str:
+    if phase not in ASSESSMENT_PHASES or profile not in {"balanced", "engineering"}:
+        return ""
+
+    return f"""
+
+Engineering Assessment Mode:
+- Assessment profile: {profile}
+- This mode broadens intermediate engineering review only. It does not loosen final verified-finding gates.
+- AI output and phase artifacts must not mutate core artifacts.
+- Do not invent numeric values. If a needed voltage, current, temperature, dissipation, trace width,
+  spacing, material property, or operating condition is missing, record the missing value explicitly.
+
+Allowed assessment classifications for this phase:
+- engineering_concern_candidate
+- blocked_verification_candidate
+- datasheet_check_needed
+- human_review_question
+- calculation_needed
+
+Keep these categories distinct:
+- verified facts: directly supported by a cited artifact, local datasheet page/reference, schematic record,
+  BOM row, board JSON, helper output, or vision observation with a stable source path.
+- engineering observations: evidence-linked review notes that identify a possible design concern without
+  final pass/fail language.
+- hypotheses: plausible engineering interpretations that need more evidence or calculation before use.
+- blocked verifications: checks that cannot be completed because required evidence, measurements,
+  datasheet limits, or operating assumptions are missing.
+- final findings: Phase 19 output only, and only for verified, evidence-backed items that satisfy the
+  findings schema and validation gates.
+
+Intermediate phases may produce engineering concerns only when each concern:
+- is linked to concrete evidence such as an artifact path, page/reference, refdes, net, or helper result.
+- identifies the missing information or calculation needed to verify it.
+- avoids final pass/fail, compliance, or defect language.
+- avoids invented numeric values and does not substitute guesses for missing data.
+
+Examples:
+- Good: engineering_concern_candidate: "Verify regulator load current and thermal dissipation; evidence page/refdes; missing current."
+- Bad: "Regulator fails thermal check" without calculation.
+
+Final-report gate preservation:
+- Only verified, evidence-backed items may become final findings.
+- Engineering concerns, hypotheses, blocked verifications, datasheet checks, human review questions,
+  and calculation-needed items must remain separately classified unless later evidence verifies them.
+"""
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -45,6 +109,7 @@ def main() -> int:
 
     phase_name = PHASES[args.phase]
     project = args.project
+    assessment_profile = assessment_profile_from_env()
 
     prompt = f"""You are working in the ThomsonLint repository.
 
@@ -123,6 +188,7 @@ A BOM row may be marked status=found only when the datasheet PDF is downloaded a
 If SearXNG returns candidate URLs but no local file is saved, status must be ambiguous or missing, not found.
 Record candidate_urls and failed_candidate_urls in the datasheet manifest.
 """
+    prompt += engineering_assessment_prompt(args.phase, assessment_profile)
 
     # BEGIN STRICT PHASE 1 INGEST WORKFLOW PROMPT
     if args.phase == 1:
@@ -824,6 +890,42 @@ Do not infer electrical limits from package or vendor names alone.
 
     # BEGIN STRICT PHASE 13 IMAGE VISION PROMPT
     if args.phase == 13:
+        phase13_annotation_instructions = ""
+        if assessment_profile in {"balanced", "engineering"}:
+            phase13_annotation_instructions = f"""
+
+Engineering annotation artifact for assessment profile {assessment_profile}:
+- scripts/vision_image_review.py must also write exports/{project}-vision-engineering-annotations.json.
+- Keep this artifact separate from exports/{project}-image-evidence-review.json.
+- Engineering annotations are not final findings and must not be promoted into findings in Phase 13.
+- For schematic pages, ask the vision model to identify page/image name, page type, visible functional
+  blocks, important refdes and net names, likely circuit purpose, component roles, engineering concern
+  candidates, blocked verification candidates, datasheet checks, calculations needed, human review
+  questions, not-verifiable-from-image limits, confidence, and evidence references.
+- For layout/Gerber pages, ask the vision model to identify layer/page type, visible routing/planes/features,
+  possible layout/manufacturing concerns, whether coordinate/board-data is required before geometry claims,
+  what cannot be concluded from image alone, engineering concern candidates, blocked verification candidates,
+  human review questions, confidence, and evidence references.
+- Reject or record generic visual claims such as "routing verified", "connectivity verified",
+  "power distribution verified", "layer inspected", "visual inspection passed", or
+  "component placement verified" unless they include concrete page-specific observations.
+- Do not invent numeric values.
+- Do not make exact geometry claims from screenshots/Gerber images unless tied to board-coordinate evidence.
+- Do not use final-style language such as "Regulator fails thermal check", "PMOS is incorrectly designed",
+  "This trace violates current density", or "Impedance violation found".
+
+Required assessment artifact:
+- exports/{project}-vision-engineering-annotations.json
+
+Required assessment artifact checks:
+- phase=13
+- assessment_profile="{assessment_profile}"
+- annotations is a list
+- annotation_count equals len(annotations)
+- each annotation keeps engineering_concern_candidates and blocked_verification_candidates separate from final findings
+- generic claims are absent from engineering annotations or recorded in generic_claims_rejected
+- overall_pass=true only when the image evidence review passed and annotations were produced for reviewed images
+"""
         prompt += f"""
 
 Phase 13 specific instructions:
@@ -875,6 +977,7 @@ Required pass criteria for image-evidence-review.json:
 Validation artifact (image-evidence-review-validation.json) required fields:
 - phase
 - overall_pass (bool — TOP LEVEL, not nested; true only when all review pass criteria above are met)
+{phase13_annotation_instructions}
 
 Do not create findings in Phase 13.
 Do not execute Phase 14.
@@ -1262,6 +1365,95 @@ Do not execute Phase 18 if overall_gate_pass=false.
 
     # BEGIN STRICT PHASE 18/19 FULL COVERAGE PROMPT
     if args.phase == 18:
+        phase18_candidate_category_instructions = ""
+        if assessment_profile in {"balanced", "engineering"}:
+            phase18_candidate_category_instructions = f"""
+
+Engineering assessment candidate categories for profile {assessment_profile}:
+- Keep the canonical output path: exports/{project}-candidate-findings.json.
+- Do not write only exports/{project}-phase-runs/phase-18/candidate-findings.json.
+- Treat exports/{project}-vision-engineering-annotations.json as optional input when present.
+  Use it to derive engineering concern, blocked verification, datasheet check, calculation,
+  and human-review candidates, but do not treat vision annotations as verified findings by default.
+  If the annotation artifact is absent, warn and continue with existing Phase 8-16 evidence.
+- Candidate records are pre-final-review classifications, not final findings.
+- Do not mutate core artifacts.
+- Do not invent numeric values.
+
+Required top-level candidate arrays:
+- verified_finding_candidates
+- engineering_concern_candidates
+- blocked_verification_candidates
+- datasheet_check_candidates
+- calculation_candidates
+- human_review_candidates
+- rejected_or_unsupported_candidates
+
+Candidate record fields, where applicable:
+- candidate_id
+- candidate_type
+- title
+- statement
+- engineering_basis
+- evidence_refs
+- source_artifacts
+- observed_refdes
+- observed_nets
+- missing_information
+- recommended_next_check
+- confidence
+- promotion_eligibility
+- final_finding_allowed
+- notes
+
+Category rules:
+- verified_finding_candidates: only items that appear evidence-backed and potentially promotable to final findings.
+  Include evidence references, reasoning, and missing validation if any. Generic visual claims are not allowed here.
+- engineering_concern_candidates: technically meaningful concerns that are plausible but not yet verified.
+  Include observed evidence, why it matters, what is missing, and recommended next check. Avoid final pass/fail language.
+- blocked_verification_candidates: important checks blocked by missing inputs. Include what is blocked, why it matters,
+  missing input, and how to resolve.
+- datasheet_check_candidates: items where a datasheet should be consulted. Include target refdes/MPN when available,
+  suspected parameter, and reason for check.
+- calculation_candidates: items needing deterministic calculation before conclusion. Include required inputs and
+  calculation type. Do not include invented result values.
+- human_review_candidates: ambiguous or high-risk items needing engineer review. Include focused question and evidence.
+- rejected_or_unsupported_candidates: generic, unsupported, final-style, or unsafe candidate claims that should not proceed.
+
+Required summary counts:
+- verified_finding_candidate_count
+- engineering_concern_candidate_count
+- blocked_verification_candidate_count
+- datasheet_check_candidate_count
+- calculation_candidate_count
+- human_review_candidate_count
+- rejected_or_unsupported_candidate_count
+
+Validation and rejection rules:
+- Generic visual claims such as "routing verified" must not be accepted as verified_finding_candidates.
+- Final-style claims without calculation/evidence must be downgraded to concern/blocked verification or recorded in
+  rejected_or_unsupported_candidates.
+- Candidate records with numeric conclusions must cite deterministic calculation evidence.
+- Candidate records from vision annotations must not be automatically final findings.
+- Missing current must produce blocked_verification_candidate or calculation_candidate, not final current/thermal violation.
+- Missing impedance rules must produce blocked_verification_candidate, not impedance failure.
+
+Good engineering_concern_candidate:
+"Observed apparent V24P0 high-side PMOS/load-switching section. Verify FET Vds, Vgs, gate pull network, transient exposure, and load current. Evidence: schematic/page annotation references Q2/R68/R69/R70 and V24P0/P20 context. Missing: exact gate-source voltage and load current."
+
+Good blocked_verification_candidate:
+"Impedance cannot be verified because stackup evidence lacks impedance rules. Do not report impedance failure. Required input: controlled impedance requirements or fabrication stackup constraints."
+
+Good calculation_candidate:
+"Regulator thermal margin requires deterministic calculation. Required inputs: Vin, Vout, output current, package thermal resistance, ambient assumption, and copper area."
+
+Bad/rejected:
+- "Regulator fails thermal check."
+- "PMOS is incorrectly designed."
+- "Trace violates current density."
+- "3 impedance violations found."
+- "Routing verified."
+"""
         prompt += f"""
 
 Phase 18 full-coverage candidate development instructions:
@@ -1275,11 +1467,13 @@ Do not select only a small sample when more concrete evidence-backed candidates 
 
 Required behavior:
 - Review all Phase 8 through Phase 16 evidence.
+- Write the canonical artifact exports/{project}-candidate-findings.json.
 - Include every concrete, non-duplicative, evidence-supported candidate.
 - Reject unsupported, vague, duplicate, or single-source-overclaimed candidates.
 - Keep rejected candidates in a rejected_candidates section with the rejection reason.
 - Each retained candidate must have concrete citations to generated evidence artifacts.
 - Candidate volume is controlled only by evidence quality, duplication, schema compatibility, and validation requirements.
+{phase18_candidate_category_instructions}
 
 Allowed:
 - Many candidates, if each is evidence-backed.
@@ -1375,6 +1569,27 @@ blockers=["validate_findings.py failed after repair attempts — see logs"].
     # END STRICT PHASE 20 VALIDATE AND REPAIR PROMPT
 
     if args.phase == 21:
+        phase21_assessment_report_instructions = ""
+        if assessment_profile in {"balanced", "engineering"}:
+            phase21_assessment_report_instructions = f"""
+
+Engineering assessment report split for profile {assessment_profile}:
+- Read the canonical Phase 18 artifact: exports/{project}-candidate-findings.json.
+- Generate and preserve exports/{project}-engineering-assessment-report-sections.json.
+- The HTML report should show these read-only sections separately from verified findings:
+  1. Verified Findings
+  2. Engineering Concerns
+  3. Blocked Verifications
+  4. Datasheet Checks Needed
+  5. Calculations Needed
+  6. Human Review Questions
+  7. Rejected / Unsupported Candidates, when useful for diagnostics
+- Engineering concerns and blocked verifications are not verified findings.
+- Do not count engineering_concern_candidates or blocked_verification_candidates as issues.
+- Do not promote "Regulator fails thermal check", "Impedance violation found", or "Routing verified"
+  into verified findings without the existing final verified-finding gates.
+- Zero verified findings is acceptable when valid concern/blocker sections are preserved separately.
+"""
         prompt += f"""
 
 Phase 21 — Generate Report instructions:
@@ -1403,6 +1618,7 @@ Required fields in the validation artifact:
 - html_report_exists
 - markdown_report_only_detected
 - overall_pass
+{phase21_assessment_report_instructions}
 
 overall_pass=true ONLY when ALL of:
 - validation_passed_before_report=true

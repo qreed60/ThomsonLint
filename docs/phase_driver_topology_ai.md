@@ -8,6 +8,71 @@ The original phase driver covered only the evidence_review workflow, using numer
 ./scripts/run_phase_driver.sh TestProject 1 22
 ```
 
+## Full-Plan Assessment Profiles
+
+Numeric full-plan prompt generation supports `THOMSONLINT_ASSESSMENT_PROFILE`.
+The default, unset value is equivalent to `strict` and preserves the existing
+phase prompts.
+
+- `strict`: existing behavior; intermediate phases keep the current constrained
+  evidence-review wording.
+- `balanced`: phases 13-19 may record separately classified engineering concern
+  candidates, blocked verifications, datasheet checks, human review questions,
+  and calculation-needed items when they are evidence-linked and avoid final
+  pass/fail language.
+- `engineering`: same safety gates as `balanced`, intended for deeper hardware
+  engineering assessment before final findings are written.
+
+Engineering assessment output is intermediate review material only. Final
+findings remain gated by Phase 19 and the findings validator: only verified,
+evidence-backed items may become final findings, and no AI output may mutate
+core artifacts.
+
+For Phase 13, the standard image evidence review remains
+`exports/<project>-image-evidence-review.json`. When the profile is `balanced`
+or `engineering`, Phase 13 also writes
+`exports/<project>-vision-engineering-annotations.json`. That annotation
+artifact records page-level engineering observations, concern candidates,
+blocked verifications, datasheet checks, calculations needed, and human-review
+questions. These annotations are not verified findings; they are review
+candidates for later concern generation and must remain separate until a later
+verified-finding gate proves them.
+
+Phase 13 local vision review uses `VISION_TEMPERATURE` when set. The value must
+be numeric from `0.0` through `2.0`; unset preserves the existing temperature
+default. For Kimi vision/thinking models, run with `VISION_TEMPERATURE=0.8` to
+send that value in the chat/completions request and record it in the review
+artifact metadata.
+
+In balanced/engineering mode Phase 13 requires complete coverage: exactly one
+review record and one annotation record per expected image ID from the
+inventory. If rich engineering annotation content is unavailable or incomplete,
+a minimal repaired annotation record is written with empty arrays and explicit
+blocked_verification_candidates / not_verifiable_from_image entries. Minimal
+repaired annotations indicate incomplete engineering extraction, not a verified
+finding. The phase passes only when every expected image has both a valid review
+record (page_actually_opened=true) and a valid or minimally-repaired annotation
+record.
+
+For Phase 18, the canonical candidate artifact remains
+`exports/<project>-candidate-findings.json`. In `balanced` or `engineering`
+profiles, that artifact separates `verified_finding_candidates` from
+`engineering_concern_candidates`, `blocked_verification_candidates`,
+`datasheet_check_candidates`, `calculation_candidates`,
+`human_review_candidates`, and `rejected_or_unsupported_candidates`. These
+categories are pre-final-review classifications only. Engineering concerns and
+blocked verifications are not final findings, and final gates remain strict.
+
+For report generation, `balanced` and `engineering` profiles add a minimal
+section split backed by
+`exports/<project>-engineering-assessment-report-sections.json`. The HTML report
+keeps verified findings separate from Engineering Concerns, Blocked
+Verifications, Datasheet Checks Needed, Calculations Needed, Human Review
+Questions, and diagnostic Rejected / Unsupported Candidates. Engineering
+concerns and blocked verifications are not counted as verified findings. This is
+enabled with `THOMSONLINT_ASSESSMENT_PROFILE=balanced` or
+`THOMSONLINT_ASSESSMENT_PROFILE=engineering`.
+
 For PR16-PR37, use the explicit topology_ai workflow. PR40 allows `pre01` starts from post-conversion exports:
 
 ```bash

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,6 +102,173 @@ PHASE_ARTIFACTS = {
         "exports/{project}-phase-checkpoints.jsonl",
     ],
 }
+
+ASSESSMENT_ENABLED_PROFILES = {"balanced", "engineering"}
+CANDIDATE_CATEGORY_FIELDS = [
+    "verified_finding_candidates",
+    "engineering_concern_candidates",
+    "blocked_verification_candidates",
+    "datasheet_check_candidates",
+    "calculation_candidates",
+    "human_review_candidates",
+    "rejected_or_unsupported_candidates",
+]
+CANDIDATE_SUMMARY_COUNT_FIELDS = {
+    "verified_finding_candidates": "verified_finding_candidate_count",
+    "engineering_concern_candidates": "engineering_concern_candidate_count",
+    "blocked_verification_candidates": "blocked_verification_candidate_count",
+    "datasheet_check_candidates": "datasheet_check_candidate_count",
+    "calculation_candidates": "calculation_candidate_count",
+    "human_review_candidates": "human_review_candidate_count",
+    "rejected_or_unsupported_candidates": "rejected_or_unsupported_candidate_count",
+}
+GENERIC_CANDIDATE_CLAIMS = {
+    "routing verified",
+    "connectivity verified",
+    "power distribution verified",
+    "layer inspected",
+    "visual inspection passed",
+    "component placement verified",
+}
+FINAL_STYLE_CLAIM_FRAGMENTS = [
+    "fails thermal check",
+    "incorrectly designed",
+    "violates current density",
+    "impedance violation found",
+    "impedance violations found",
+]
+REPORT_SECTION_FIELDS = [
+    "verified_findings",
+    "engineering_concerns",
+    "blocked_verifications",
+    "datasheet_checks_needed",
+    "calculations_needed",
+    "human_review_questions",
+    "rejected_or_unsupported",
+]
+REPORT_SECTION_COUNT_FIELDS = {
+    "verified_findings": "verified_findings_count",
+    "engineering_concerns": "engineering_concerns_count",
+    "blocked_verifications": "blocked_verifications_count",
+    "datasheet_checks_needed": "datasheet_checks_needed_count",
+    "calculations_needed": "calculations_needed_count",
+    "human_review_questions": "human_review_questions_count",
+    "rejected_or_unsupported": "rejected_or_unsupported_count",
+}
+
+
+def assessment_profile_from_env() -> str:
+    return os.environ.get("THOMSONLINT_ASSESSMENT_PROFILE", "strict").strip().lower() or "strict"
+
+
+def assessment_enabled() -> bool:
+    return assessment_profile_from_env() in ASSESSMENT_ENABLED_PROFILES
+
+
+def phase_artifact_templates(phase: int) -> list[str]:
+    templates = list(PHASE_ARTIFACTS.get(phase, []))
+    if phase == 13 and assessment_enabled():
+        templates.append("exports/{project}-vision-engineering-annotations.json")
+    if phase == 21 and assessment_enabled():
+        templates.append("exports/{project}-engineering-assessment-report-sections.json")
+    return templates
+
+
+def normalized_claim(value: str) -> str:
+    return " ".join(value.strip().lower().rstrip(".:;!").split())
+
+
+def candidate_text(candidate: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for field in ["title", "summary", "statement", "description", "engineering_basis", "notes"]:
+        value = candidate.get(field)
+        if isinstance(value, str):
+            parts.append(value)
+    return " ".join(parts)
+
+
+def has_deterministic_calculation_evidence(candidate: dict[str, Any]) -> bool:
+    haystack = candidate_text(candidate)
+    for field in ["evidence_refs", "source_artifacts"]:
+        value = candidate.get(field)
+        if isinstance(value, list):
+            haystack += " " + " ".join(str(item) for item in value)
+    return "calculation" in haystack.lower() or "deterministic" in haystack.lower()
+
+
+def phase18_candidate_artifact_blockers(path: Path, data: dict[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if data.get("phase") != 18:
+        blockers.append(f"{path} phase must be 18")
+    if data.get("assessment_profile") not in {"balanced", "engineering"}:
+        blockers.append(f"{path} assessment_profile must be balanced or engineering")
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        blockers.append(f"{path} summary must be an object")
+        summary = {}
+
+    total_candidates = 0
+    for category in CANDIDATE_CATEGORY_FIELDS:
+        rows = data.get(category)
+        if not isinstance(rows, list):
+            blockers.append(f"{path} {category} must be a list")
+            continue
+        count_field = CANDIDATE_SUMMARY_COUNT_FIELDS[category]
+        if summary.get(count_field) != len(rows):
+            blockers.append(f"{path} summary.{count_field} does not match {category} length")
+        total_candidates += len(rows)
+        for idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                blockers.append(f"{path} {category}[{idx}] must be an object")
+                continue
+            expected_type = category.removesuffix("s")
+            if row.get("candidate_type") and row.get("candidate_type") != expected_type:
+                blockers.append(f"{path} {category}[{idx}] candidate_type does not match category")
+            if category != "verified_finding_candidates" and row.get("final_finding_allowed") is True:
+                blockers.append(f"{path} {category}[{idx}] final_finding_allowed must not be true")
+
+    if total_candidates == 0:
+        blockers.append(f"{path} has no candidate records")
+
+    for idx, row in enumerate(data.get("verified_finding_candidates", [])):
+        if not isinstance(row, dict):
+            continue
+        text = candidate_text(row)
+        normalized = normalized_claim(text)
+        if any(claim in normalized for claim in GENERIC_CANDIDATE_CLAIMS):
+            blockers.append(f"{path} verified_finding_candidates[{idx}] contains generic visual claim")
+        if any(fragment in normalized for fragment in FINAL_STYLE_CLAIM_FRAGMENTS):
+            blockers.append(f"{path} verified_finding_candidates[{idx}] contains unsupported final-style claim")
+        if any(char.isdigit() for char in text) and not has_deterministic_calculation_evidence(row):
+            blockers.append(f"{path} verified_finding_candidates[{idx}] has numeric conclusion without deterministic calculation evidence")
+    return blockers
+
+
+def report_sections_artifact_blockers(path: Path, data: dict[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if data.get("phase") != "report":
+        blockers.append(f"{path} phase must be report")
+    if data.get("assessment_profile") not in {"balanced", "engineering"}:
+        blockers.append(f"{path} assessment_profile must be balanced or engineering")
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        blockers.append(f"{path} summary must be an object")
+        summary = {}
+    for section in REPORT_SECTION_FIELDS:
+        rows = data.get(section)
+        if not isinstance(rows, list):
+            blockers.append(f"{path} {section} must be a list")
+            continue
+        count_field = REPORT_SECTION_COUNT_FIELDS[section]
+        if summary.get(count_field) != len(rows):
+            blockers.append(f"{path} summary.{count_field} does not match {section} length")
+    verified_text = " ".join(candidate_text(row) for row in data.get("verified_findings", []) if isinstance(row, dict))
+    normalized = normalized_claim(verified_text)
+    if any(claim in normalized for claim in GENERIC_CANDIDATE_CLAIMS):
+        blockers.append(f"{path} verified_findings contains generic visual claim")
+    if any(fragment in normalized for fragment in FINAL_STYLE_CLAIM_FRAGMENTS):
+        blockers.append(f"{path} verified_findings contains unsupported final-style claim")
+    return blockers
 
 CHECKPOINT_KEYS = [
     "phase_number",
@@ -468,6 +636,20 @@ def artifact_passes(path: Path, phase: int) -> tuple[bool, list[str]]:
         # Phase 7: image-evidence-inventory.json (no separate validation artifact) uses overall_pass
         if phase == 7 and path.name.endswith("-image-evidence-inventory.json") and data.get("overall_pass") is not True:
             blockers.append(f"{path} overall_pass is not true")
+        if phase == 13 and path.name.endswith("-vision-engineering-annotations.json"):
+            annotations = data.get("annotations")
+            if data.get("overall_pass") is not True:
+                blockers.append(f"{path} overall_pass is not true")
+            if not isinstance(annotations, list):
+                blockers.append(f"{path} annotations is not a list")
+            elif data.get("annotation_count") != len(annotations):
+                blockers.append(f"{path} annotation_count does not match annotations length")
+            if data.get("assessment_profile") not in {"balanced", "engineering"}:
+                blockers.append(f"{path} assessment_profile is not balanced or engineering")
+        if phase == 18 and path.name.endswith("-candidate-findings.json") and assessment_enabled():
+            blockers.extend(phase18_candidate_artifact_blockers(path, data))
+        if phase == 21 and path.name.endswith("-engineering-assessment-report-sections.json") and assessment_enabled():
+            blockers.extend(report_sections_artifact_blockers(path, data))
 
     return not blockers, blockers
 
@@ -493,7 +675,7 @@ def main() -> int:
         print(f"checkpoint already exists for phase {args.phase}; leaving unchanged")
         return 0
 
-    artifact_templates = PHASE_ARTIFACTS.get(args.phase, [])
+    artifact_templates = phase_artifact_templates(args.phase)
     artifacts = render(artifact_templates, args.project)
 
     blockers: list[str] = []
