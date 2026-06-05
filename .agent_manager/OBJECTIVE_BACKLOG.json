@@ -98,11 +98,21 @@
       "id": "phase14_scalability_architecture_review_agents",
       "title": "Add scalability and architecture review agents",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 14",
       "risk_level": "medium",
       "write_capable": false,
       "description": "Extend read-only review scaffolding with scalability and architecture reports while preserving deterministic validation authority."
+    },
+    {
+      "id": "phase15_multi_model_routing",
+      "title": "Add multi-model routing scaffold",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 15",
+      "risk_level": "high",
+      "write_capable": false,
+      "description": "Add deterministic model-role routing metadata and task packet assignment without enabling model execution by default."
     }
   ]
 }
