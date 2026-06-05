@@ -63,6 +63,16 @@
         "No target source edits",
         "Original project checkout remains clean"
       ]
+    },
+    {
+      "id": "phase11_morning_report_and_plan_update",
+      "title": "Create morning report and weekly plan updater",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 11",
+      "risk_level": "medium",
+      "write_capable": false,
+      "description": "Create central morning report and project weekly-plan update workflow using deterministic artifacts only."
     }
   ]
 }

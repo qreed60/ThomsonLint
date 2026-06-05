@@ -3,8 +3,8 @@
   "week_id": "2026-W23",
   "created_date": "2026-06-05",
   "project_id": "thomsonlint",
-  "current_phase": "Phase 9: isolated coder worktree scaffolding",
-  "primary_goal": "Prepare isolated coder execution scaffolding without running OpenHands or modifying target source behavior.",
+  "current_phase": "Phase 11: morning report and weekly plan update",
+  "primary_goal": "Create deterministic morning report and weekly-plan update workflow.",
   "hard_gates": {
     "no_model_calls": true,
     "no_openhands_execution": true,
@@ -15,11 +15,11 @@
   },
   "objectives": [
     {
-      "id": "phase9_isolated_coder_worktree_scaffold",
+      "id": "phase11_morning_report_and_plan_update",
       "priority": 1,
       "status": "active",
-      "description": "Create isolated coder worktree and central task packet.",
-      "success_metric": "Worktree and task packet exist; no OpenHands/model execution.",
+      "description": "Create deterministic reporting and weekly plan update artifacts.",
+      "success_metric": "Report/update workflow runs without OpenHands/model/LangGraph execution.",
       "write_capable": false
     }
   ],
