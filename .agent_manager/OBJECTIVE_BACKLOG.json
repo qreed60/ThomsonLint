@@ -6,7 +6,7 @@
       "id": "phase5_project_state_bootstrap",
       "title": "Create project-local agent manager state",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 5",
       "risk_level": "low",
       "write_capable": false,
@@ -23,10 +23,46 @@
       "id": "phase6_project_metrics_collector",
       "title": "Collect deterministic project metrics",
       "priority": 2,
-      "status": "queued",
+      "status": "complete",
       "phase": "Phase 6",
       "risk_level": "medium",
       "write_capable": false
+    },
+    {
+      "id": "phase7_plain_python_runner_v0",
+      "title": "Run plain Python nightly runner v0",
+      "priority": 70,
+      "status": "complete",
+      "phase": "Phase 7",
+      "risk_level": "low",
+      "write_capable": false
+    },
+    {
+      "id": "phase8_manager_planning_pass",
+      "title": "Run deterministic manager planning pass",
+      "priority": 80,
+      "status": "complete",
+      "phase": "Phase 8",
+      "risk_level": "low",
+      "write_capable": false
+    },
+    {
+      "id": "phase9_isolated_coder_worktree_scaffold",
+      "title": "Prepare isolated coder worktree scaffold",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 9",
+      "risk_level": "medium",
+      "write_capable": false,
+      "description": "Create isolated coder worktree and task packet without running OpenHands or modifying source behavior.",
+      "success_metrics": [
+        "Detached worktree is created under central agent-manager worktrees",
+        "Coder task packet is written under central runs",
+        "No OpenHands execution",
+        "No model calls",
+        "No target source edits",
+        "Original project checkout remains clean"
+      ]
     }
   ]
 }
