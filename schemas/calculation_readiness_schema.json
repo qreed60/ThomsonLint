@@ -1,0 +1,315 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThomsonLint Calculation Readiness Inventory",
+  "description": "Schema for the PR16 calculation-readiness inventory artifact. The artifact records readiness, blockers, unresolved inputs, and provenance for later deterministic current-allocation and copper-calculation stages; it does not authorize inferred electrical defaults.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "generated_at_utc",
+    "sources",
+    "summary",
+    "branch_readiness",
+    "rail_readiness",
+    "missing_data_items",
+    "unresolved",
+    "warnings",
+    "errors",
+    "execution_pass",
+    "calculation_readiness_pass"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sources": {
+      "type": "object",
+      "required": [
+        "branch_topology_enriched",
+        "role_resolution",
+        "rail_relationships",
+        "geometry_review"
+      ],
+      "properties": {
+        "branch_topology_enriched": { "type": "string", "minLength": 1 },
+        "role_resolution": { "type": ["string", "null"] },
+        "rail_relationships": { "type": ["string", "null"] },
+        "geometry_review": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "branch_count",
+        "power_branch_count",
+        "ground_branch_count",
+        "signal_branch_count",
+        "branches_ready_for_current_allocation_attempt",
+        "branches_blocked_from_current_allocation_attempt",
+        "branches_ready_for_copper_calculation",
+        "branches_blocked_from_copper_calculation",
+        "rails_ready_for_current_allocation_attempt",
+        "rails_blocked_from_current_allocation_attempt",
+        "rails_ready_for_copper_calculation",
+        "rails_blocked_from_copper_calculation",
+        "missing_data_item_count",
+        "unresolved_count",
+        "warning_count",
+        "error_count"
+      ],
+      "properties": {
+        "branch_count": { "$ref": "#/definitions/nonNegativeInteger" },
+        "power_branch_count": { "$ref": "#/definitions/nonNegativeInteger" },
+        "ground_branch_count": { "$ref": "#/definitions/nonNegativeInteger" },
+        "signal_branch_count": { "$ref": "#/definitions/nonNegativeInteger" },
+        "branches_ready_for_current_allocation_attempt": { "$ref": "#/definitions/nonNegativeInteger" },
+        "branches_blocked_from_current_allocation_attempt": { "$ref": "#/definitions/nonNegativeInteger" },
+        "branches_ready_for_copper_calculation": { "$ref": "#/definitions/nonNegativeInteger" },
+        "branches_blocked_from_copper_calculation": { "$ref": "#/definitions/nonNegativeInteger" },
+        "rails_ready_for_current_allocation_attempt": { "$ref": "#/definitions/nonNegativeInteger" },
+        "rails_blocked_from_current_allocation_attempt": { "$ref": "#/definitions/nonNegativeInteger" },
+        "rails_ready_for_copper_calculation": { "$ref": "#/definitions/nonNegativeInteger" },
+        "rails_blocked_from_copper_calculation": { "$ref": "#/definitions/nonNegativeInteger" },
+        "missing_data_item_count": { "$ref": "#/definitions/nonNegativeInteger" },
+        "unresolved_count": { "$ref": "#/definitions/nonNegativeInteger" },
+        "warning_count": { "$ref": "#/definitions/nonNegativeInteger" },
+        "error_count": { "$ref": "#/definitions/nonNegativeInteger" }
+      },
+      "additionalProperties": false
+    },
+    "branch_readiness": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/branchReadiness" }
+    },
+    "rail_readiness": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/railReadiness" }
+    },
+    "missing_data_items": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/missingDataItem" }
+    },
+    "unresolved": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "warnings": { "$ref": "#/definitions/stringArray" },
+    "errors": { "$ref": "#/definitions/stringArray" },
+    "execution_pass": { "type": "boolean" },
+    "calculation_readiness_pass": { "type": "boolean" }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "readinessState": {
+      "type": "object",
+      "required": [
+        "status",
+        "ready",
+        "blocking_reasons",
+        "required_missing_data_ids",
+        "notes"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ready", "blocked", "not_required"]
+        },
+        "ready": { "type": "boolean" },
+        "blocking_reasons": { "$ref": "#/definitions/stringArray" },
+        "required_missing_data_ids": { "$ref": "#/definitions/stringArray" },
+        "notes": { "$ref": "#/definitions/stringArray" }
+      },
+      "additionalProperties": false
+    },
+    "availableBranchContext": {
+      "type": "object",
+      "required": [
+        "has_rail_context",
+        "has_source_context",
+        "has_sink_context",
+        "has_pass_through_context",
+        "has_geometry_context",
+        "has_current_model",
+        "has_voltage",
+        "has_layer",
+        "has_copper_thickness",
+        "has_width",
+        "has_length_or_area"
+      ],
+      "properties": {
+        "has_rail_context": { "type": "boolean" },
+        "has_source_context": { "type": "boolean" },
+        "has_sink_context": { "type": "boolean" },
+        "has_pass_through_context": { "type": "boolean" },
+        "has_geometry_context": { "type": "boolean" },
+        "has_current_model": { "type": "boolean" },
+        "has_voltage": { "type": "boolean" },
+        "has_layer": { "type": "boolean" },
+        "has_copper_thickness": { "type": "boolean" },
+        "has_width": { "type": "boolean" },
+        "has_length_or_area": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "availableRailContext": {
+      "type": "object",
+      "required": [
+        "has_source_context",
+        "has_sink_context",
+        "has_parent_or_source",
+        "has_child_or_sink",
+        "has_voltage",
+        "has_any_branch_geometry",
+        "has_any_branch_current"
+      ],
+      "properties": {
+        "has_source_context": { "type": "boolean" },
+        "has_sink_context": { "type": "boolean" },
+        "has_parent_or_source": { "type": "boolean" },
+        "has_child_or_sink": { "type": "boolean" },
+        "has_voltage": { "type": "boolean" },
+        "has_any_branch_geometry": { "type": "boolean" },
+        "has_any_branch_current": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["type", "source", "field", "value", "reason"],
+      "properties": {
+        "type": { "type": "string" },
+        "source": { "type": "string" },
+        "field": { "type": "string" },
+        "value": {},
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "branchReadiness": {
+      "type": "object",
+      "required": [
+        "branch_id",
+        "net_name",
+        "rail_name",
+        "branch_type",
+        "is_power_branch",
+        "is_ground_branch",
+        "rail_role",
+        "rail_voltage",
+        "current_allocation_readiness",
+        "copper_calculation_readiness",
+        "available_context",
+        "source_candidates",
+        "sink_candidates",
+        "pass_through_candidates",
+        "rail_relationships",
+        "evidence",
+        "unresolved"
+      ],
+      "properties": {
+        "branch_id": { "type": ["string", "null"] },
+        "net_name": { "type": ["string", "null"] },
+        "rail_name": { "type": ["string", "null"] },
+        "branch_type": { "type": ["string", "null"] },
+        "is_power_branch": { "type": "boolean" },
+        "is_ground_branch": { "type": "boolean" },
+        "rail_role": { "type": "string" },
+        "rail_voltage": { "type": ["number", "integer", "string", "null"] },
+        "current_allocation_readiness": { "$ref": "#/definitions/readinessState" },
+        "copper_calculation_readiness": { "$ref": "#/definitions/readinessState" },
+        "available_context": { "$ref": "#/definitions/availableBranchContext" },
+        "source_candidates": { "type": "array", "items": {} },
+        "sink_candidates": { "type": "array", "items": {} },
+        "pass_through_candidates": { "type": "array", "items": {} },
+        "rail_relationships": { "type": "array", "items": {} },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidence" } },
+        "unresolved": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": false
+    },
+    "railReadiness": {
+      "type": "object",
+      "required": [
+        "rail",
+        "role",
+        "voltage",
+        "parent_rails",
+        "child_rails",
+        "branch_ids",
+        "current_allocation_readiness",
+        "copper_calculation_readiness",
+        "available_context",
+        "missing_data_ids",
+        "unresolved"
+      ],
+      "properties": {
+        "rail": { "type": ["string", "null"] },
+        "role": { "type": "string" },
+        "voltage": { "type": ["number", "integer", "string", "null"] },
+        "parent_rails": { "$ref": "#/definitions/stringArray" },
+        "child_rails": { "$ref": "#/definitions/stringArray" },
+        "branch_ids": { "$ref": "#/definitions/stringArray" },
+        "current_allocation_readiness": { "$ref": "#/definitions/readinessState" },
+        "copper_calculation_readiness": { "$ref": "#/definitions/readinessState" },
+        "available_context": { "$ref": "#/definitions/availableRailContext" },
+        "missing_data_ids": { "$ref": "#/definitions/stringArray" },
+        "unresolved": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": false
+    },
+    "missingDataItem": {
+      "type": "object",
+      "required": [
+        "id",
+        "scope",
+        "target_type",
+        "target_id",
+        "category",
+        "severity",
+        "blocks",
+        "recommended_resolution",
+        "source_artifact",
+        "evidence",
+        "notes"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "minLength": 1 },
+        "target_type": { "type": "string", "minLength": 1 },
+        "target_id": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "minLength": 1 },
+        "severity": {
+          "type": "string",
+          "enum": ["blocker", "warning", "info"]
+        },
+        "blocks": { "$ref": "#/definitions/stringArray" },
+        "recommended_resolution": {
+          "type": "string",
+          "enum": ["deterministic_rule", "datasheet_extraction", "ai_rule_batch", "human_review"]
+        },
+        "source_artifact": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidence" } },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,150 @@ PHASES = {
     21: "Generate Report",
     22: "Final Summary",
 }
+
+ASSESSMENT_ENABLED_PROFILES = {"balanced", "engineering"}
+CANDIDATE_CATEGORY_FIELDS = [
+    "verified_finding_candidates",
+    "engineering_concern_candidates",
+    "blocked_verification_candidates",
+    "datasheet_check_candidates",
+    "calculation_candidates",
+    "human_review_candidates",
+    "rejected_or_unsupported_candidates",
+]
+CANDIDATE_SUMMARY_COUNT_FIELDS = {
+    "verified_finding_candidates": "verified_finding_candidate_count",
+    "engineering_concern_candidates": "engineering_concern_candidate_count",
+    "blocked_verification_candidates": "blocked_verification_candidate_count",
+    "datasheet_check_candidates": "datasheet_check_candidate_count",
+    "calculation_candidates": "calculation_candidate_count",
+    "human_review_candidates": "human_review_candidate_count",
+    "rejected_or_unsupported_candidates": "rejected_or_unsupported_candidate_count",
+}
+GENERIC_CANDIDATE_CLAIMS = {
+    "routing verified",
+    "connectivity verified",
+    "power distribution verified",
+    "layer inspected",
+    "visual inspection passed",
+    "component placement verified",
+}
+FINAL_STYLE_CLAIM_FRAGMENTS = [
+    "fails thermal check",
+    "incorrectly designed",
+    "violates current density",
+    "impedance violation found",
+    "impedance violations found",
+]
+REPORT_SECTION_FIELDS = [
+    "verified_findings",
+    "engineering_concerns",
+    "blocked_verifications",
+    "datasheet_checks_needed",
+    "calculations_needed",
+    "human_review_questions",
+    "rejected_or_unsupported",
+]
+REPORT_SECTION_COUNT_FIELDS = {
+    "verified_findings": "verified_findings_count",
+    "engineering_concerns": "engineering_concerns_count",
+    "blocked_verifications": "blocked_verifications_count",
+    "datasheet_checks_needed": "datasheet_checks_needed_count",
+    "calculations_needed": "calculations_needed_count",
+    "human_review_questions": "human_review_questions_count",
+    "rejected_or_unsupported": "rejected_or_unsupported_count",
+}
+
+
+def assessment_enabled() -> bool:
+    profile = os.environ.get("THOMSONLINT_ASSESSMENT_PROFILE", "strict").strip().lower() or "strict"
+    return profile in ASSESSMENT_ENABLED_PROFILES
+
+
+def normalized_claim(value: str) -> str:
+    return " ".join(value.strip().lower().rstrip(".:;!").split())
+
+
+def candidate_text(candidate: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for field in ["title", "summary", "statement", "description", "engineering_basis", "notes"]:
+        value = candidate.get(field)
+        if isinstance(value, str):
+            parts.append(value)
+    return " ".join(parts)
+
+
+def has_deterministic_calculation_evidence(candidate: dict[str, Any]) -> bool:
+    haystack = candidate_text(candidate)
+    for field in ["evidence_refs", "source_artifacts"]:
+        value = candidate.get(field)
+        if isinstance(value, list):
+            haystack += " " + " ".join(str(item) for item in value)
+    return "calculation" in haystack.lower() or "deterministic" in haystack.lower()
+
+
+def validate_phase18_candidate_artifact(path: Path, data: dict[str, Any]) -> None:
+    if data.get("phase") != 18:
+        fail(f"{path} phase must be 18")
+    if data.get("assessment_profile") not in {"balanced", "engineering"}:
+        fail(f"{path} assessment_profile must be balanced or engineering")
+
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        fail(f"{path} summary must be an object")
+
+    total_candidates = 0
+    for category in CANDIDATE_CATEGORY_FIELDS:
+        rows = data.get(category)
+        if not isinstance(rows, list):
+            fail(f"{path} {category} must be a list")
+        count_field = CANDIDATE_SUMMARY_COUNT_FIELDS[category]
+        if summary.get(count_field) != len(rows):
+            fail(f"{path} summary.{count_field} does not match {category} length")
+        total_candidates += len(rows)
+        for idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                fail(f"{path} {category}[{idx}] must be an object")
+            if row.get("candidate_type") and row.get("candidate_type") != category.removesuffix("s"):
+                fail(f"{path} {category}[{idx}] candidate_type does not match category")
+            if category != "verified_finding_candidates" and row.get("final_finding_allowed") is True:
+                fail(f"{path} {category}[{idx}] final_finding_allowed must not be true")
+
+    if total_candidates == 0:
+        fail(f"{path} has no candidate records")
+
+    for idx, row in enumerate(data.get("verified_finding_candidates", [])):
+        text = candidate_text(row)
+        normalized = normalized_claim(text)
+        if any(claim in normalized for claim in GENERIC_CANDIDATE_CLAIMS):
+            fail(f"{path} verified_finding_candidates[{idx}] contains generic visual claim")
+        if any(fragment in normalized for fragment in FINAL_STYLE_CLAIM_FRAGMENTS):
+            fail(f"{path} verified_finding_candidates[{idx}] contains unsupported final-style claim")
+        if any(char.isdigit() for char in text) and not has_deterministic_calculation_evidence(row):
+            fail(f"{path} verified_finding_candidates[{idx}] has numeric conclusion without deterministic calculation evidence")
+
+
+def validate_report_sections_artifact(path: Path, data: dict[str, Any]) -> None:
+    if data.get("phase") != "report":
+        fail(f"{path} phase must be report")
+    if data.get("assessment_profile") not in {"balanced", "engineering"}:
+        fail(f"{path} assessment_profile must be balanced or engineering")
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        fail(f"{path} summary must be an object")
+    for section in REPORT_SECTION_FIELDS:
+        rows = data.get(section)
+        if not isinstance(rows, list):
+            fail(f"{path} {section} must be a list")
+        count_field = REPORT_SECTION_COUNT_FIELDS[section]
+        if summary.get(count_field) != len(rows):
+            fail(f"{path} summary.{count_field} does not match {section} length")
+    verified_text = " ".join(candidate_text(row) for row in data.get("verified_findings", []) if isinstance(row, dict))
+    normalized = normalized_claim(verified_text)
+    if any(claim in normalized for claim in GENERIC_CANDIDATE_CLAIMS):
+        fail(f"{path} verified_findings contains generic visual claim")
+    if any(fragment in normalized for fragment in FINAL_STYLE_CLAIM_FRAGMENTS):
+        fail(f"{path} verified_findings contains unsupported final-style claim")
 
 CHECKPOINT_KEYS = [
     "phase_number",
@@ -516,6 +661,33 @@ def audit_phase(exports: Path, project: str, phase: int) -> None:
         require_file(exports / f"{project}-image-evidence-inventory.json")
         require_file(exports / f"{project}-image-evidence-review.json")
         require_true(exports / f"{project}-image-evidence-review-validation.json", "overall_pass")
+        if assessment_enabled():
+            annotations_path = exports / f"{project}-vision-engineering-annotations.json"
+            annotations = load_json(annotations_path)
+            if not isinstance(annotations, dict):
+                fail(f"{annotations_path} must be a JSON object, not a list")
+            require_true(annotations_path, "overall_pass")
+            rows = annotations.get("annotations")
+            if not isinstance(rows, list):
+                fail(f"{annotations_path} annotations must be a list")
+            if annotations.get("annotation_count") != len(rows):
+                fail(f"{annotations_path} annotation_count does not match annotations length")
+            if annotations.get("assessment_profile") not in {"balanced", "engineering"}:
+                fail(f"{annotations_path} assessment_profile must be balanced or engineering")
+            for idx, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    fail(f"{annotations_path} annotations[{idx}] must be an object")
+                for field in [
+                    "engineering_concern_candidates",
+                    "blocked_verification_candidates",
+                    "datasheet_check_needed",
+                    "calculation_needed",
+                    "human_review_questions",
+                    "not_verifiable_from_image",
+                    "generic_claims_rejected",
+                ]:
+                    if not isinstance(row.get(field), list):
+                        fail(f"{annotations_path} annotations[{idx}].{field} must be a list")
 
     elif phase == 9:
         require_file(exports / f"{project}-board-evidence-inventory.json")
@@ -536,7 +708,13 @@ def audit_phase(exports: Path, project: str, phase: int) -> None:
         audit_phase17_pre_findings_gate(exports, project)
 
     elif phase == 18:
-        require_file(exports / f"{project}-candidate-findings.json")
+        candidate_path = exports / f"{project}-candidate-findings.json"
+        require_file(candidate_path)
+        if assessment_enabled():
+            data = load_json(candidate_path)
+            if not isinstance(data, dict):
+                fail(f"{candidate_path} must be a JSON object, not a list")
+            validate_phase18_candidate_artifact(candidate_path, data)
 
     elif phase == 19:
         require_file(exports / f"{project}-findings.json")
@@ -557,6 +735,12 @@ def audit_phase(exports: Path, project: str, phase: int) -> None:
     elif phase == 21:
         require_file(exports / f"{project}-review.html")
         require_true(exports / f"{project}-report-generation-validation.json", "overall_pass")
+        if assessment_enabled():
+            sections_path = exports / f"{project}-engineering-assessment-report-sections.json"
+            sections = load_json(sections_path)
+            if not isinstance(sections, dict):
+                fail(f"{sections_path} must be a JSON object, not a list")
+            validate_report_sections_artifact(sections_path, sections)
 
     elif phase == 22:
         for p in range(1, 23):

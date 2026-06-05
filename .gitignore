@@ -53,3 +53,4 @@ Thumbs.db
 
 # Weird local file accidentally created by shell/config copy
 (same as "user" config, ignored)
+env.local

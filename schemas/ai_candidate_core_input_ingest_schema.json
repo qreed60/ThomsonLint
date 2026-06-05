@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThomsonLint AI Candidate Core Input Ingest Workflow Artifacts",
+  "anyOf": [
+    {"$ref": "#/definitions/manifest"},
+    {"$ref": "#/definitions/status"},
+    {"$ref": "#/definitions/addendaIndex"},
+    {"$ref": "#/definitions/review"},
+    {"$ref": "#/definitions/blockers"}
+  ],
+  "definitions": {
+    "sourceArtifact": {
+      "type": "object",
+      "required": ["artifact_type", "path", "notes"],
+      "properties": {
+        "artifact_type": {"type": "string"},
+        "path": {"type": "string"},
+        "notes": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "step": {
+      "type": "object",
+      "required": ["step_id", "step_name", "script", "arguments", "input_path", "output_path", "return_code", "status", "stdout_preview", "stderr_preview", "warnings", "errors"],
+      "properties": {
+        "step_id": {"type": "string"},
+        "step_name": {"enum": ["current_candidate_ingest", "rating_current_candidate_ingest", "rating_model_candidate_ingest"]},
+        "script": {"type": ["string", "null"]},
+        "arguments": {"type": "array", "items": {"type": "string"}},
+        "input_path": {"type": ["string", "null"]},
+        "output_path": {"type": ["string", "null"]},
+        "return_code": {"type": ["integer", "null"]},
+        "status": {"enum": ["passed", "failed", "skipped"]},
+        "stdout_preview": {"type": "string"},
+        "stderr_preview": {"type": "string"},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "errors": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["candidate_current_input_record_count", "candidate_rating_input_record_count", "current_ingest_input_record_count", "rating_current_ingest_input_record_count", "current_candidate_normalized_record_count", "rating_current_candidate_normalized_record_count", "rating_candidate_normalized_record_count", "addenda_file_count", "addenda_records_seen", "step_count", "passed_step_count", "failed_step_count", "skipped_step_count", "blocker_count", "provenance_gap_count", "wrote_candidate_normalized_outputs", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "do_not_apply_to_core_yet", "error_count", "warning_count"],
+      "properties": {
+        "candidate_current_input_record_count": {"type": "integer", "minimum": 0},
+        "candidate_rating_input_record_count": {"type": "integer", "minimum": 0},
+        "current_ingest_input_record_count": {"type": "integer", "minimum": 0},
+        "rating_current_ingest_input_record_count": {"type": "integer", "minimum": 0},
+        "current_candidate_normalized_record_count": {"type": "integer", "minimum": 0},
+        "rating_current_candidate_normalized_record_count": {"type": "integer", "minimum": 0},
+        "rating_candidate_normalized_record_count": {"type": "integer", "minimum": 0},
+        "addenda_file_count": {"type": "integer", "minimum": 0},
+        "addenda_records_seen": {"type": "integer", "minimum": 0},
+        "step_count": {"type": "integer", "minimum": 0},
+        "passed_step_count": {"type": "integer", "minimum": 0},
+        "failed_step_count": {"type": "integer", "minimum": 0},
+        "skipped_step_count": {"type": "integer", "minimum": 0},
+        "blocker_count": {"type": "integer", "minimum": 0},
+        "provenance_gap_count": {"type": "integer", "minimum": 0},
+        "wrote_candidate_normalized_outputs": {"const": true},
+        "wrote_core_artifacts": {"const": false},
+        "wrote_core_normalized_outputs": {"const": false},
+        "ran_current_model_ingest": {"type": "boolean"},
+        "ran_rating_model_ingest": {"type": "boolean"},
+        "ran_current_allocation": {"const": false},
+        "ran_calculations": {"const": false},
+        "merged_addenda": {"const": false},
+        "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
+        "do_not_apply_to_core_yet": {"const": true},
+        "error_count": {"type": "integer", "minimum": 0},
+        "warning_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "source_artifacts", "source_candidate_input_manifest", "source_candidate_input_status", "candidate_outputs", "intermediate_outputs", "steps", "core_outputs_written", "normalized_core_outputs_written", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "requires_future_core_apply_stage", "summary", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_core_input_ingest_v1"},
+        "source_artifacts": {"type": "array", "items": {"$ref": "#/definitions/sourceArtifact"}},
+        "source_candidate_input_manifest": {"type": "string"},
+        "source_candidate_input_status": {"type": "string"},
+        "candidate_outputs": {"type": "object", "additionalProperties": {"type": "string"}},
+        "intermediate_outputs": {"type": "object", "additionalProperties": {"type": "string"}},
+        "steps": {"type": "array", "items": {"$ref": "#/definitions/step"}},
+        "core_outputs_written": {"const": false},
+        "normalized_core_outputs_written": {"const": false},
+        "ran_current_model_ingest": {"type": "boolean"},
+        "ran_rating_model_ingest": {"type": "boolean"},
+        "ran_current_allocation": {"const": false},
+        "ran_calculations": {"const": false},
+        "merged_addenda": {"const": false},
+        "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
+        "requires_future_core_apply_stage": {"const": true},
+        "summary": {"$ref": "#/definitions/summary"},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "status", "candidate_ingest_only", "wrote_candidate_normalized_outputs", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_current_model_ingest", "ran_rating_model_ingest", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "requires_future_core_apply_stage", "current_ingest_status", "rating_current_ingest_status", "rating_model_ingest_status", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_core_input_ingest_v1"},
+        "status": {"enum": ["candidate_ingest_pass", "candidate_ingest_with_warnings", "candidate_ingest_failed"]},
+        "candidate_ingest_only": {"const": true},
+        "wrote_candidate_normalized_outputs": {"const": true},
+        "wrote_core_artifacts": {"const": false},
+        "wrote_core_normalized_outputs": {"const": false},
+        "ran_current_model_ingest": {"type": "boolean"},
+        "ran_rating_model_ingest": {"type": "boolean"},
+        "ran_current_allocation": {"const": false},
+        "ran_calculations": {"const": false},
+        "merged_addenda": {"const": false},
+        "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
+        "requires_future_core_apply_stage": {"const": true},
+        "current_ingest_status": {"enum": ["not_run", "passed", "failed", "skipped"]},
+        "rating_current_ingest_status": {"enum": ["not_run", "passed", "failed", "skipped"]},
+        "rating_model_ingest_status": {"enum": ["not_run", "passed", "failed", "skipped"]},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "addendaIndex": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "candidate_ingest_only", "source_artifacts", "indexed_addenda_files", "safe_to_merge_automatically", "merged_addenda", "summary", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_core_input_ingest_v1"},
+        "candidate_ingest_only": {"const": true},
+        "source_artifacts": {"type": "array", "items": {"$ref": "#/definitions/sourceArtifact"}},
+        "indexed_addenda_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["addenda_type", "path", "record_count", "safe_to_merge_automatically", "merged_addenda", "requires_merge_validator"],
+            "properties": {
+              "addenda_type": {"type": "string"},
+              "path": {"type": "string"},
+              "record_count": {"type": "integer", "minimum": 0},
+              "safe_to_merge_automatically": {"const": false},
+              "merged_addenda": {"const": false},
+              "requires_merge_validator": {"const": true}
+            },
+            "additionalProperties": false
+          }
+        },
+        "safe_to_merge_automatically": {"const": false},
+        "merged_addenda": {"const": false},
+        "summary": {"type": "object"},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "blocker": {
+      "type": "object",
+      "required": ["reason_code", "details", "step_id"],
+      "properties": {
+        "reason_code": {"enum": ["missing_candidate_input_dir", "missing_candidate_input_manifest", "missing_candidate_input_status", "malformed_candidate_input_manifest", "malformed_candidate_input_status", "candidate_input_status_failed", "missing_candidate_current_input", "missing_candidate_rating_input", "malformed_candidate_current_input", "malformed_candidate_rating_input", "current_ingest_failed", "rating_current_ingest_failed", "rating_model_ingest_failed", "script_missing", "script_outside_repo", "output_path_outside_out_dir", "forbidden_core_output_path", "attempted_allocation_blocked", "attempted_calculation_blocked", "addenda_requires_merge_validator", "provenance_gap", "candidate_current_adapter_empty", "candidate_rating_adapter_empty", "candidate_input_record_unmappable", "missing_candidate_record_value", "missing_candidate_record_unit", "missing_candidate_record_target_identity"]},
+        "details": {"type": "string"},
+        "step_id": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "candidate_ingest_only", "not_performed_steps", "skipped_steps", "failed_steps", "provenance_gaps", "source_candidate_input_summary", "candidate_output_summary", "addenda_review_summary", "future_required_steps", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_core_input_ingest_v1"},
+        "candidate_ingest_only": {"const": true},
+        "not_performed_steps": {"type": "array", "items": {"type": "string"}},
+        "skipped_steps": {"type": "array", "items": {"$ref": "#/definitions/step"}},
+        "failed_steps": {"type": "array", "items": {"$ref": "#/definitions/step"}},
+        "provenance_gaps": {"type": "array", "items": {"type": "object"}},
+        "source_candidate_input_summary": {"type": "object"},
+        "candidate_output_summary": {"$ref": "#/definitions/summary"},
+        "addenda_review_summary": {"type": "object"},
+        "future_required_steps": {"type": "array", "items": {"type": "string"}},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "blockers": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "candidate_ingest_only", "blocker_records", "summary", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_core_input_ingest_v1"},
+        "candidate_ingest_only": {"const": true},
+        "blocker_records": {"type": "array", "items": {"$ref": "#/definitions/blocker"}},
+        "summary": {"type": "object"},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

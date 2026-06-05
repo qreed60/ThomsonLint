@@ -1,0 +1,31 @@
+{
+  "packet_id": "12B-001",
+  "schema_version": "ai_extraction_result_v1",
+  "status": "completed",
+  "extracted_items": [
+    {
+      "item_id": "fixture_c40_current_001",
+      "missing_data_item_ids": [
+        "mdi_manifest_branch_current_unknown_v3p3_mdi_branch_current_unknown_branch_br_v3p3_bottom_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation"
+      ],
+      "target_type": "component_current_model",
+      "target_refdes": "C40",
+      "target_mpn": null,
+      "field_name": "max_current_a",
+      "value": 12,
+      "unit": "mA",
+      "condition": "fixture-only PR44 non-empty topology_ai path",
+      "basis": "datasheet",
+      "source_file": "tests/fixtures/topology_ai_non_empty/fixture-not-live-ai.pdf",
+      "source_page": 1,
+      "evidence_quote": "Fixture-only cited max current 12 mA for PR44 pipeline validation.",
+      "confidence": 0.92,
+      "human_review_needed": false
+    }
+  ],
+  "unknown_items": [],
+  "notes": [
+    "Static hand-authored fixture for PR44; not live AI output."
+  ],
+  "warnings": []
+}

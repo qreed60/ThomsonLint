@@ -1,0 +1,242 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThomsonLint AI Candidate Normalized Promotion Review Artifacts",
+  "anyOf": [
+    {"$ref": "#/definitions/review"},
+    {"$ref": "#/definitions/status"},
+    {"$ref": "#/definitions/diff"},
+    {"$ref": "#/definitions/readiness"},
+    {"$ref": "#/definitions/blockers"}
+  ],
+  "definitions": {
+    "sourceArtifact": {
+      "type": "object",
+      "required": ["artifact_type", "path", "notes"],
+      "properties": {
+        "artifact_type": {"type": "string"},
+        "path": {"type": ["string", "null"]},
+        "notes": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "blocker": {
+      "type": "object",
+      "required": ["reason_code", "details", "review_item_id", "candidate_record_id"],
+      "properties": {
+        "reason_code": {
+          "enum": [
+            "missing_candidate_ingested_dir",
+            "missing_candidate_ingest_manifest",
+            "missing_candidate_ingest_status",
+            "malformed_candidate_ingest_manifest",
+            "malformed_candidate_ingest_status",
+            "candidate_ingest_status_failed",
+            "missing_candidate_current_normalized",
+            "missing_candidate_rating_normalized",
+            "malformed_candidate_current_normalized",
+            "malformed_candidate_rating_normalized",
+            "missing_core_current_normalized",
+            "missing_core_rating_normalized",
+            "malformed_core_current_normalized",
+            "malformed_core_rating_normalized",
+            "missing_identity",
+            "missing_value",
+            "missing_unit",
+            "conflict_with_core",
+            "provenance_gap",
+            "unsupported_record",
+            "attempted_core_write_blocked",
+            "attempted_ingestion_blocked",
+            "attempted_allocation_blocked",
+            "attempted_calculation_blocked",
+            "addenda_requires_merge_validator"
+          ]
+        },
+        "details": {"type": "string"},
+        "review_item_id": {"type": ["string", "null"]},
+        "candidate_record_id": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "reviewItem": {
+      "type": "object",
+      "required": ["review_item_id", "candidate_record_id", "record_family", "review_classification", "candidate_identity", "candidate_value", "core_match", "candidate_source", "provenance", "ready_for_core_apply", "requires_human_review", "requires_future_core_apply_stage", "blockers", "warnings"],
+      "properties": {
+        "review_item_id": {"type": "string"},
+        "candidate_record_id": {"type": "string"},
+        "record_family": {"enum": ["current_model", "rating_model"]},
+        "review_classification": {
+          "enum": [
+            "add_candidate",
+            "duplicate_existing",
+            "conflict_with_core",
+            "missing_identity",
+            "missing_value",
+            "missing_unit",
+            "provenance_gap",
+            "unsupported_record"
+          ]
+        },
+        "candidate_identity": {"type": "object"},
+        "candidate_value": {"type": "object"},
+        "core_match": {"type": "object"},
+        "candidate_source": {"type": "object"},
+        "provenance": {"type": "object"},
+        "ready_for_core_apply": {"const": false},
+        "requires_human_review": {"const": true},
+        "requires_future_core_apply_stage": {"const": true},
+        "blockers": {"type": "array", "items": {"$ref": "#/definitions/blocker"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["candidate_current_record_count", "candidate_rating_record_count", "core_current_record_count", "core_rating_record_count", "current_review_item_count", "rating_review_item_count", "add_candidate_count", "duplicate_existing_count", "conflict_with_core_count", "missing_identity_count", "missing_value_count", "missing_unit_count", "provenance_gap_count", "unsupported_record_count", "blocked_item_count", "review_ready_item_count", "human_review_required_count", "applied_anything", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "do_not_apply_to_core_yet", "error_count", "warning_count"],
+      "properties": {
+        "candidate_current_record_count": {"type": "integer", "minimum": 0},
+        "candidate_rating_record_count": {"type": "integer", "minimum": 0},
+        "core_current_record_count": {"type": "integer", "minimum": 0},
+        "core_rating_record_count": {"type": "integer", "minimum": 0},
+        "current_review_item_count": {"type": "integer", "minimum": 0},
+        "rating_review_item_count": {"type": "integer", "minimum": 0},
+        "add_candidate_count": {"type": "integer", "minimum": 0},
+        "duplicate_existing_count": {"type": "integer", "minimum": 0},
+        "conflict_with_core_count": {"type": "integer", "minimum": 0},
+        "missing_identity_count": {"type": "integer", "minimum": 0},
+        "missing_value_count": {"type": "integer", "minimum": 0},
+        "missing_unit_count": {"type": "integer", "minimum": 0},
+        "provenance_gap_count": {"type": "integer", "minimum": 0},
+        "unsupported_record_count": {"type": "integer", "minimum": 0},
+        "blocked_item_count": {"type": "integer", "minimum": 0},
+        "review_ready_item_count": {"type": "integer", "minimum": 0},
+        "human_review_required_count": {"type": "integer", "minimum": 0},
+        "applied_anything": {"const": false},
+        "wrote_core_artifacts": {"const": false},
+        "wrote_core_normalized_outputs": {"const": false},
+        "ran_ingestion": {"const": false},
+        "ran_current_allocation": {"const": false},
+        "ran_calculations": {"const": false},
+        "merged_addenda": {"const": false},
+        "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
+        "do_not_apply_to_core_yet": {"const": true},
+        "error_count": {"type": "integer", "minimum": 0},
+        "warning_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "review_only", "source_artifacts", "source_candidate_ingest_manifest", "source_candidate_ingest_status", "core_artifacts", "candidate_outputs", "current_model_review_items", "rating_model_review_items", "provenance_gaps", "blocked_items", "summary", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_normalized_promotion_review_v1"},
+        "review_only": {"const": true},
+        "source_artifacts": {"type": "array", "items": {"$ref": "#/definitions/sourceArtifact"}},
+        "source_candidate_ingest_manifest": {"type": "string"},
+        "source_candidate_ingest_status": {"type": "string"},
+        "core_artifacts": {
+          "type": "object",
+          "required": ["current_models_normalized", "rating_models_normalized"],
+          "properties": {
+            "current_models_normalized": {"type": ["string", "null"]},
+            "rating_models_normalized": {"type": ["string", "null"]}
+          },
+          "additionalProperties": false
+        },
+        "candidate_outputs": {"type": "object", "additionalProperties": {"type": "string"}},
+        "current_model_review_items": {"type": "array", "items": {"$ref": "#/definitions/reviewItem"}},
+        "rating_model_review_items": {"type": "array", "items": {"$ref": "#/definitions/reviewItem"}},
+        "provenance_gaps": {"type": "array", "items": {"type": "object"}},
+        "blocked_items": {"type": "array", "items": {"$ref": "#/definitions/reviewItem"}},
+        "summary": {"$ref": "#/definitions/summary"},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "status", "review_only", "applied_anything", "wrote_core_artifacts", "wrote_core_normalized_outputs", "ran_ingestion", "ran_current_allocation", "ran_calculations", "merged_addenda", "safe_for_core_apply", "ready_for_core_apply", "requires_future_core_apply_stage", "current_review_item_count", "rating_review_item_count", "blocked_item_count", "provenance_gap_count", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_normalized_promotion_review_v1"},
+        "status": {"enum": ["review_pass", "review_with_warnings", "review_failed"]},
+        "review_only": {"const": true},
+        "applied_anything": {"const": false},
+        "wrote_core_artifacts": {"const": false},
+        "wrote_core_normalized_outputs": {"const": false},
+        "ran_ingestion": {"const": false},
+        "ran_current_allocation": {"const": false},
+        "ran_calculations": {"const": false},
+        "merged_addenda": {"const": false},
+        "safe_for_core_apply": {"const": false},
+        "ready_for_core_apply": {"const": false},
+        "requires_future_core_apply_stage": {"const": true},
+        "current_review_item_count": {"type": "integer", "minimum": 0},
+        "rating_review_item_count": {"type": "integer", "minimum": 0},
+        "blocked_item_count": {"type": "integer", "minimum": 0},
+        "provenance_gap_count": {"type": "integer", "minimum": 0},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "diff": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "review_only", "record_family", "core_artifact", "candidate_artifact", "review_items", "summary", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_normalized_promotion_review_v1"},
+        "review_only": {"const": true},
+        "record_family": {"enum": ["current_model", "rating_model"]},
+        "core_artifact": {"type": ["string", "null"]},
+        "candidate_artifact": {"type": "string"},
+        "review_items": {"type": "array", "items": {"$ref": "#/definitions/reviewItem"}},
+        "summary": {"$ref": "#/definitions/summary"},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "readiness": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "review_only", "ready_for_core_apply", "safe_for_core_apply", "requires_future_core_apply_stage", "human_review_required", "review_ready_items", "blocked_items", "summary", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_normalized_approval_readiness_v1"},
+        "review_only": {"const": true},
+        "ready_for_core_apply": {"const": false},
+        "safe_for_core_apply": {"const": false},
+        "requires_future_core_apply_stage": {"const": true},
+        "human_review_required": {"const": true},
+        "review_ready_items": {"type": "array", "items": {"$ref": "#/definitions/reviewItem"}},
+        "blocked_items": {"type": "array", "items": {"$ref": "#/definitions/reviewItem"}},
+        "summary": {"$ref": "#/definitions/summary"},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "blockers": {
+      "type": "object",
+      "required": ["project", "generated_at_utc", "schema_version", "review_only", "blocker_records", "summary", "errors", "warnings"],
+      "properties": {
+        "project": {"type": "string"},
+        "generated_at_utc": {"type": "string"},
+        "schema_version": {"const": "ai_candidate_normalized_promotion_review_v1"},
+        "review_only": {"const": true},
+        "blocker_records": {"type": "array", "items": {"$ref": "#/definitions/blocker"}},
+        "summary": {"type": "object"},
+        "errors": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

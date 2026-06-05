@@ -1,0 +1,367 @@
+PHASE8_DIR=exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z
+PACKET_ROOT=exports/TestProject/phase_runs/topology_ai/20260602T025735Z/pr26_ai_packet_build/packets
+EVIDENCE_INDEX=exports/TestProject/full_run_001/phase03_datasheet_evidence_reviewed_clean_20260601T185417Z/datasheet_evidence/datasheet-evidence-index.json
+MODEL=qwen35_2b
+packet_count=70
+stage=12A count=46
+GENERATING 12A-001
+  raw_len= 513 raw_head= '{\n  "packet_id": "12A-001",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_bottom_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branc'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-001.json extracted= 0 unknown= 1
+GENERATING 12A-002
+  raw_len= 518 raw_head= '{\n  "packet_id": "12A-002",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_drill_1_6_via_cluster_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-002.json extracted= 0 unknown= 1
+GENERATING 12A-003
+  raw_len= 513 raw_head= '{\n  "packet_id": "12A-003",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_layer2_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branc'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-003.json extracted= 0 unknown= 1
+GENERATING 12A-004
+  raw_len= 513 raw_head= '{\n  "packet_id": "12A-004",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_layer3_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branc'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-004.json extracted= 0 unknown= 1
+GENERATING 12A-005
+  raw_len= 513 raw_head= '{\n  "packet_id": "12A-005",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_layer4_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branc'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-005.json extracted= 0 unknown= 1
+GENERATING 12A-006
+  raw_len= 516 raw_head= '{\n  "packet_id": "12A-006",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_layer4_plane_region_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "br'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-006.json extracted= 0 unknown= 1
+GENERATING 12A-007
+  raw_len= 515 raw_head= '{\n  "packet_id": "12A-007",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_layer4_trace_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bra'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-007.json extracted= 0 unknown= 1
+GENERATING 12A-008
+  raw_len= 513 raw_head= '{\n  "packet_id": "12A-008",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_layer5_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branc'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-008.json extracted= 0 unknown= 1
+GENERATING 12A-009
+  raw_len= 510 raw_head= '{\n  "packet_id": "12A-009",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_top_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_c'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-009.json extracted= 0 unknown= 1
+GENERATING 12A-010
+  raw_len= 513 raw_head= '{\n  "packet_id": "12A-010",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_top_plane_region_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branc'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-010.json extracted= 0 unknown= 1
+GENERATING 12A-011
+  raw_len= 512 raw_head= '{\n  "packet_id": "12A-011",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v3p3_mdi_source_sink_not_resolved_branch_br_v3p3_top_trace_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-011.json extracted= 0 unknown= 1
+GENERATING 12A-012
+  raw_len= 517 raw_head= '{\n  "packet_id": "12A-012",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vn24p0_mdi_source_sink_not_resolved_branch_br_vn24p0_bottom_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "b'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-012.json extracted= 0 unknown= 1
+GENERATING 12A-013
+  raw_len= 517 raw_head= '{\n  "packet_id": "12A-013",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vn24p0_mdi_source_sink_not_resolved_branch_br_vn24p0_layer2_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "b'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-013.json extracted= 0 unknown= 1
+GENERATING 12A-014
+  raw_len= 517 raw_head= '{\n  "packet_id": "12A-014",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vn24p0_mdi_source_sink_not_resolved_branch_br_vn24p0_layer3_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "b'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-014.json extracted= 0 unknown= 1
+GENERATING 12A-015
+  raw_len= 517 raw_head= '{\n  "packet_id": "12A-015",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vn24p0_mdi_source_sink_not_resolved_branch_br_vn24p0_layer4_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "b'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-015.json extracted= 0 unknown= 1
+GENERATING 12A-016
+  raw_len= 517 raw_head= '{\n  "packet_id": "12A-016",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vn24p0_mdi_source_sink_not_resolved_branch_br_vn24p0_layer5_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "b'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-016.json extracted= 0 unknown= 1
+GENERATING 12A-017
+  raw_len= 514 raw_head= '{\n  "packet_id": "12A-017",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vn24p0_mdi_source_sink_not_resolved_branch_br_vn24p0_top_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bran'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-017.json extracted= 0 unknown= 1
+GENERATING 12A-018
+  raw_len= 517 raw_head= '{\n  "packet_id": "12A-018",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vn24p0_mdi_source_sink_not_resolved_branch_br_vn24p0_top_plane_region_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "b'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-018.json extracted= 0 unknown= 1
+GENERATING 12A-019
+  raw_len= 516 raw_head= '{\n  "packet_id": "12A-019",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vn24p0_mdi_source_sink_not_resolved_branch_br_vn24p0_top_trace_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "br'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-019.json extracted= 0 unknown= 1
+GENERATING 12A-020
+  raw_len= 515 raw_head= '{\n  "packet_id": "12A-020",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_bottom_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bra'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-020.json extracted= 0 unknown= 1
+GENERATING 12A-021
+  raw_len= 520 raw_head= '{\n  "packet_id": "12A-021",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_drill_1_6_via_cluster_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name":'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-021.json extracted= 0 unknown= 1
+GENERATING 12A-022
+  raw_len= 515 raw_head= '{\n  "packet_id": "12A-022",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_layer2_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bra'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-022.json extracted= 0 unknown= 1
+GENERATING 12A-023
+  raw_len= 515 raw_head= '{\n  "packet_id": "12A-023",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_layer3_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bra'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-023.json extracted= 0 unknown= 1
+GENERATING 12A-024
+  raw_len= 515 raw_head= '{\n  "packet_id": "12A-024",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_layer4_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bra'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-024.json extracted= 0 unknown= 1
+GENERATING 12A-025
+  raw_len= 518 raw_head= '{\n  "packet_id": "12A-025",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_layer4_plane_region_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-025.json extracted= 0 unknown= 1
+GENERATING 12A-026
+  raw_len= 517 raw_head= '{\n  "packet_id": "12A-026",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_layer4_trace_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "b'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-026.json extracted= 0 unknown= 1
+GENERATING 12A-027
+  raw_len= 515 raw_head= '{\n  "packet_id": "12A-027",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_layer5_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bra'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-027.json extracted= 0 unknown= 1
+GENERATING 12A-028
+  raw_len= 512 raw_head= '{\n  "packet_id": "12A-028",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_top_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-028.json extracted= 0 unknown= 1
+GENERATING 12A-029
+  raw_len= 515 raw_head= '{\n  "packet_id": "12A-029",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_top_plane_region_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bra'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-029.json extracted= 0 unknown= 1
+GENERATING 12A-030
+  raw_len= 514 raw_head= '{\n  "packet_id": "12A-030",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_v24p0_mdi_source_sink_not_resolved_branch_br_v24p0_top_trace_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bran'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-030.json extracted= 0 unknown= 1
+GENERATING 12A-031
+  raw_len= 511 raw_head= '{\n  "packet_id": "12A-031",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_bottom_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-031.json extracted= 0 unknown= 1
+GENERATING 12A-032
+  raw_len= 511 raw_head= '{\n  "packet_id": "12A-032",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_layer2_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-032.json extracted= 0 unknown= 1
+GENERATING 12A-033
+  raw_len= 511 raw_head= '{\n  "packet_id": "12A-033",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_layer3_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-033.json extracted= 0 unknown= 1
+GENERATING 12A-034
+  raw_len= 511 raw_head= '{\n  "packet_id": "12A-034",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_layer4_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-034.json extracted= 0 unknown= 1
+GENERATING 12A-035
+  raw_len= 514 raw_head= '{\n  "packet_id": "12A-035",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_layer4_plane_region_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "bran'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-035.json extracted= 0 unknown= 1
+GENERATING 12A-036
+  raw_len= 513 raw_head= '{\n  "packet_id": "12A-036",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_layer4_trace_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branc'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-036.json extracted= 0 unknown= 1
+GENERATING 12A-037
+  raw_len= 511 raw_head= '{\n  "packet_id": "12A-037",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_layer5_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-037.json extracted= 0 unknown= 1
+GENERATING 12A-038
+  raw_len= 508 raw_head= '{\n  "packet_id": "12A-038",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_top_pad_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_cur'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-038.json extracted= 0 unknown= 1
+GENERATING 12A-039
+  raw_len= 510 raw_head= '{\n  "packet_id": "12A-039",\n  "items": {\n    "mdi_manifest_source_sink_not_resolved_vcc_mdi_source_sink_not_resolved_branch_br_vcc_top_trace_group_000001_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_c'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-039.json extracted= 0 unknown= 1
+GENERATING 12A-040
+  raw_len= 482 raw_head= '{\n  "packet_id": "12A-040",\n  "items": {\n    "mdi_manifest_component_role_unknown_v5p0_mdi_component_role_unknown_branch_v5p0_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_current_a or current_max",\n  '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-040.json extracted= 0 unknown= 1
+GENERATING 12A-041
+  raw_len= 498 raw_head= '{\n  "packet_id": "12A-041",\n  "items": {\n    "mdi_manifest_relationship_direction_unknown_v5p0_mdi_relationship_direction_unknown_branch_v5p0_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_current_a or '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-041.json extracted= 0 unknown= 1
+GENERATING 12A-042
+  raw_len= 500 raw_head= '{\n  "packet_id": "12A-042",\n  "items": {\n    "mdi_manifest_relationship_direction_unknown_v24p0_mdi_relationship_direction_unknown_branch_v24p0_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_current_a o'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-042.json extracted= 0 unknown= 1
+GENERATING 12A-043
+  raw_len= 490 raw_head= '{\n  "packet_id": "12A-043",\n  "items": {\n    "mdi_manifest_component_role_unknown_v24p0_sw_mdi_component_role_unknown_branch_v24p0_sw_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_current_a or current_'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-043.json extracted= 0 unknown= 1
+GENERATING 12A-044
+  raw_len= 480 raw_head= '{\n  "packet_id": "12A-044",\n  "items": {\n    "mdi_manifest_component_role_unknown_vcc_mdi_component_role_unknown_branch_vcc_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_current_a or current_max",\n    '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-044.json extracted= 0 unknown= 1
+GENERATING 12A-045
+  raw_len= 496 raw_head= '{\n  "packet_id": "12A-045",\n  "items": {\n    "mdi_manifest_relationship_direction_unknown_vcc_mdi_relationship_direction_unknown_branch_vcc_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_current_a or cu'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-045.json extracted= 0 unknown= 1
+GENERATING 12A-046
+  raw_len= 502 raw_head= '{\n  "packet_id": "12A-046",\n  "items": {\n    "mdi_manifest_relationship_direction_unknown_vn24p0_mdi_relationship_direction_unknown_branch_vn24p0_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "component_role_model",\n      "field_name": "branch_current_a'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12A/12A-046.json extracted= 0 unknown= 1
+12A-001.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-002.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-003.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-004.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-005.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-006.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-007.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-008.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-009.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-010.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-011.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-012.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-013.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-014.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-015.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-016.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-017.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-018.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-019.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-020.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-021.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-022.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-023.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-024.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-025.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-026.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-027.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-028.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-029.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-030.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-031.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-032.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-033.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-034.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-035.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-036.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-037.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-038.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-039.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-040.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-041.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-042.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-043.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-044.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-045.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12A-046.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+
+expected_packet_count 46
+response_count 46
+missing_response_ids []
+extra_response_files []
+response_preflight_pass True
+stage=12B count=16
+GENERATING 12B-001
+  raw_len= 2500 raw_head= '{\n  "packet_id": "12B-001",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v3p3_mdi_branch_current_unknown_branch_br_v3p3_bottom_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n    '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-001.json extracted= 0 unknown= 5
+GENERATING 12B-002
+  raw_len= 2497 raw_head= '{\n  "packet_id": "12B-002",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v3p3_mdi_branch_current_unknown_branch_br_v3p3_layer4_plane_region_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-002.json extracted= 0 unknown= 5
+GENERATING 12B-003
+  raw_len= 505 raw_head= '{\n  "packet_id": "12B-003",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v3p3_mdi_branch_current_unknown_branch_br_v3p3_top_trace_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n     '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-003.json extracted= 0 unknown= 1
+GENERATING 12B-004
+  raw_len= 2500 raw_head= '{\n  "packet_id": "12B-004",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v5p0_mdi_branch_current_unknown_branch_br_v5p0_bottom_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n    '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-004.json extracted= 0 unknown= 5
+GENERATING 12B-005
+  raw_len= 2497 raw_head= '{\n  "packet_id": "12B-005",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v5p0_mdi_branch_current_unknown_branch_br_v5p0_layer4_plane_region_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-005.json extracted= 0 unknown= 5
+GENERATING 12B-006
+  raw_len= 762 raw_head= '{\n  "packet_id": "12B-006",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v5p0_mdi_branch_current_unknown_branch_br_v5p0_top_trace_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n     '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-006.json extracted= 0 unknown= 1
+GENERATING 12B-007
+  raw_len= 2515 raw_head= '{\n  "packet_id": "12B-007",\n  "items": {\n    "mdi_manifest_branch_current_unknown_vn24p0_mdi_branch_current_unknown_branch_br_vn24p0_bottom_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-007.json extracted= 0 unknown= 5
+GENERATING 12B-008
+  raw_len= 1523 raw_head= '{\n  "packet_id": "12B-008",\n  "items": {\n    "mdi_manifest_branch_current_unknown_vn24p0_mdi_branch_current_unknown_branch_br_vn24p0_top_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n   '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-008.json extracted= 0 unknown= 3
+GENERATING 12B-009
+  raw_len= 2510 raw_head= '{\n  "packet_id": "12B-009",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v24p0_mdi_branch_current_unknown_branch_br_v24p0_bottom_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n  '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-009.json extracted= 0 unknown= 5
+GENERATING 12B-010
+  raw_len= 2507 raw_head= '{\n  "packet_id": "12B-010",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v24p0_mdi_branch_current_unknown_branch_br_v24p0_layer4_plane_region_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-010.json extracted= 0 unknown= 5
+GENERATING 12B-011
+  raw_len= 507 raw_head= '{\n  "packet_id": "12B-011",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v24p0_mdi_branch_current_unknown_branch_br_v24p0_top_trace_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n   '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-011.json extracted= 0 unknown= 1
+GENERATING 12B-012
+  raw_len= 2488 raw_head= '{\n  "packet_id": "12B-012",\n  "items": {\n    "mdi_manifest_branch_current_unknown_vcc_mdi_branch_current_unknown_branch_br_vcc_bottom_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n      '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-012.json extracted= 0 unknown= 5
+GENERATING 12B-013
+  raw_len= 1995 raw_head= '{\n  "packet_id": "12B-013",\n  "items": {\n    "mdi_manifest_branch_current_unknown_vcc_mdi_branch_current_unknown_branch_br_vcc_layer4_trace_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model",\n    '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-013.json extracted= 0 unknown= 4
+GENERATING 12B-014
+  raw_len= 2540 raw_head= '{\n  "packet_id": "12B-014",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v24p0_sw_mdi_branch_current_unknown_branch_br_v24p0_sw_bottom_pad_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_mode'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-014.json extracted= 0 unknown= 5
+GENERATING 12B-015
+  raw_len= 2537 raw_head= '{\n  "packet_id": "12B-015",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v24p0_sw_mdi_branch_current_unknown_branch_br_v24p0_sw_layer4_plane_region_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_m'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-015.json extracted= 0 unknown= 5
+GENERATING 12B-016
+  raw_len= 629 raw_head= '{\n  "packet_id": "12B-016",\n  "items": {\n    "mdi_manifest_branch_current_unknown_v24p0_sw_mdi_branch_current_unknown_branch_br_v24p0_sw_top_trace_group_000001_copper_calculation_voltage_drop_calculation_thermal_calculation": {\n      "status": "unknown",\n      "target_type": "component_current_model'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12B/12B-016.json extracted= 0 unknown= 1
+12B-001.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-002.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-003.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12B-004.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-005.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-006.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12B-007.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-008.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 3
+12B-009.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-010.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-011.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12B-012.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-013.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 4
+12B-014.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-015.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12B-016.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+
+expected_packet_count 16
+response_count 16
+missing_response_ids []
+extra_response_files []
+response_preflight_pass True
+stage=12H count=8
+GENERATING 12H-001
+  raw_len= 2213 raw_head= '{\n  "packet_id": "12H-001",\n  "items": {\n    "mdi_manifest_voltage_unknown_vcc_mdi_voltage_unknown_branch_br_vcc_bottom_pad_group_000001_voltage_drop_calculation": {\n      "status": "unknown",\n      "target_type": "human_review_decision",\n      "field_name": "branch_current_a or current_max",\n      '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12H/12H-001.json extracted= 0 unknown= 5
+GENERATING 12H-002
+  raw_len= 1775 raw_head= '{\n  "packet_id": "12H-002",\n  "items": {\n    "mdi_manifest_voltage_unknown_vcc_mdi_voltage_unknown_branch_br_vcc_layer4_trace_group_000001_voltage_drop_calculation": {\n      "status": "unknown",\n      "target_type": "human_review_decision",\n      "field_name": "branch_current_a or current_max",\n    '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12H/12H-002.json extracted= 0 unknown= 4
+GENERATING 12H-003
+  raw_len= 483 raw_head= '{\n  "packet_id": "12H-003",\n  "items": {\n    "mdi_manifest_ambiguous_pass_through_v5p0_mdi_ambiguous_pass_through_branch_v5p0_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "human_review_decision",\n      "field_name": "branch_current_a or current_max",\n '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12H/12H-003.json extracted= 0 unknown= 1
+GENERATING 12H-004
+  raw_len= 495 raw_head= '{\n  "packet_id": "12H-004",\n  "items": {\n    "mdi_manifest_power_path_direction_unknown_v5p0_mdi_power_path_direction_unknown_branch_v5p0_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "human_review_decision",\n      "field_name": "branch_current_a or cur'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12H/12H-004.json extracted= 0 unknown= 1
+GENERATING 12H-005
+  raw_len= 497 raw_head= '{\n  "packet_id": "12H-005",\n  "items": {\n    "mdi_manifest_power_path_direction_unknown_v24p0_mdi_power_path_direction_unknown_branch_v24p0_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "human_review_decision",\n      "field_name": "branch_current_a or c'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12H/12H-005.json extracted= 0 unknown= 1
+GENERATING 12H-006
+  raw_len= 491 raw_head= '{\n  "packet_id": "12H-006",\n  "items": {\n    "mdi_manifest_ambiguous_pass_through_v24p0_sw_mdi_ambiguous_pass_through_branch_v24p0_sw_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "human_review_decision",\n      "field_name": "branch_current_a or current'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12H/12H-006.json extracted= 0 unknown= 1
+GENERATING 12H-007
+  raw_len= 503 raw_head= '{\n  "packet_id": "12H-007",\n  "items": {\n    "mdi_manifest_power_path_direction_unknown_v24p0_sw_mdi_power_path_direction_unknown_branch_v24p0_sw_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "human_review_decision",\n      "field_name": "branch_current_'
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12H/12H-007.json extracted= 0 unknown= 1
+GENERATING 12H-008
+  raw_len= 885 raw_head= '{\n  "packet_id": "12H-008",\n  "items": {\n    "mdi_manifest_ambiguous_pass_through_vcc_mdi_ambiguous_pass_through_branch_vcc_current_allocation_calculation_readiness": {\n      "status": "unknown",\n      "target_type": "human_review_decision",\n      "field_name": "branch_current_a or current_max",\n   '
+  wrote exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/responses_by_stage/12H/12H-008.json extracted= 0 unknown= 2
+12H-001.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 5
+12H-002.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 4
+12H-003.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12H-004.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12H-005.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12H-006.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12H-007.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 1
+12H-008.json schema= ai_extraction_result_v1 status= completed notes_type= list warnings_type= list extracted= 0 unknown= 2
+
+expected_packet_count 8
+response_count 8
+missing_response_ids []
+extra_response_files []
+response_preflight_pass True
+final_response_count=70
+phase driver topology_ai: project=TestProject run_dir=/home/qreed/projects/ThomsonLint/exports/TestProject/phase_runs/topology_ai/20260602T105850Z
+wrote /home/qreed/projects/ThomsonLint/exports/TestProject/phase_runs/topology_ai/20260602T105850Z/phase-driver-manifest.json
+wrote /home/qreed/projects/ThomsonLint/exports/TestProject/phase_runs/topology_ai/20260602T105850Z/phase-driver-status.json
+wrote /home/qreed/projects/ThomsonLint/exports/TestProject/phase_runs/topology_ai/20260602T105850Z/phase-driver-stage-results.json
+wrote /home/qreed/projects/ThomsonLint/exports/TestProject/phase_runs/topology_ai/20260602T105850Z/phase-driver-artifact-index.json
+wrote /home/qreed/projects/ThomsonLint/exports/TestProject/phase_runs/topology_ai/20260602T105850Z/phase-driver-blockers.json
+wrote /home/qreed/projects/ThomsonLint/exports/TestProject/phase_runs/topology_ai/20260602T105850Z/phase-driver-inspection-commands.md
+VALIDATION_RUN_DIR=exports/TestProject/phase_runs/topology_ai/20260602T105850Z
+{
+  "phase": 8,
+  "phase_name": "one_command_ai_response_dry_run",
+  "phase8_dir": "exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z",
+  "validation_run_dir": "exports/TestProject/phase_runs/topology_ai/20260602T105850Z",
+  "final_responses": "exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z/final_responses",
+  "packet_count": 70,
+  "final_response_count": 70,
+  "response_stage_counts": {
+    "12A": 46,
+    "12B": 16,
+    "12H": 8
+  },
+  "response_status_counts": {
+    "completed": 70
+  },
+  "total_extracted_items": 0,
+  "total_unknown_items": 123,
+  "driver_overall_status": "passed",
+  "driver_stage_counts": {
+    "blocked_missing_input": 0,
+    "failed": 0,
+    "not_applicable": 0,
+    "passed": 33,
+    "skipped": 0
+  },
+  "blocker_count": 0,
+  "blockers": [],
+  "safe_for_core_apply": false,
+  "ready_for_core_apply": false,
+  "wrote_core_artifacts": false,
+  "ran_post_promotion_allocation": false,
+  "ran_post_promotion_calculations": false,
+  "pr27_status_counts": {
+    "accepted": 70
+  },
+  "gates": {
+    "response_count_matches_packet_count": true,
+    "pr27_all_accepted": true,
+    "driver_passed": true,
+    "no_blockers": true,
+    "not_safe_for_core_apply": true,
+    "not_ready_for_core_apply": true,
+    "no_core_writes": true,
+    "no_allocation_rerun": true,
+    "no_calculation_rerun": true
+  },
+  "phase8_automation_pass": true
+}
+
+PHASE8_DIR exports/TestProject/full_run_001/phase08_ai_response_dry_run_qwen35_2b_20260602T103843Z
+phase8_automation_pass True

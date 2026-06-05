@@ -1,0 +1,27 @@
+{
+  "schema_version": "current_model_defaults_v1",
+  "defaults": [
+    {
+      "component_class": "ceramic_capacitor",
+      "target_type": "component_current_model",
+      "field_name": "max_current_a",
+      "value": 0.00000001,
+      "unit": "A",
+      "condition": "Engineering default for ceramic capacitor leakage/current draw",
+      "source": "engineering_default",
+      "confidence": 0.5,
+      "human_review_needed": true
+    },
+    {
+      "component_class": "electrolytic_capacitor",
+      "target_type": "component_current_model",
+      "field_name": "max_current_a",
+      "value": 0.000005,
+      "unit": "A",
+      "condition": "Engineering default for electrolytic capacitor leakage/current draw",
+      "source": "engineering_default",
+      "confidence": 0.5,
+      "human_review_needed": true
+    }
+  ]
+}
