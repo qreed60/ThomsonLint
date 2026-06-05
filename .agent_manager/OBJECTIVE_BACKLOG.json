@@ -128,11 +128,31 @@
       "id": "phase16_5_systemd_nightly_launcher",
       "title": "Add systemd nightly launcher",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 16.5",
       "risk_level": "medium",
       "write_capable": false,
       "description": "Add installable systemd service/timer for the deterministic 11 PM nightly window without enabling source writes or AI execution."
+    },
+    {
+      "id": "phase17_human_approval_draft_pr_support",
+      "title": "Add human approval and draft PR support",
+      "priority": 1,
+      "status": "complete",
+      "phase": "Phase 17",
+      "risk_level": "medium",
+      "write_capable": false,
+      "description": "Add deterministic human approval packets, draft PR text, resume instructions, and decision templates without model calls or source writes."
+    },
+    {
+      "id": "phase18a_model_backed_readonly_agent",
+      "title": "Add first model-backed read-only agent",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 18A",
+      "risk_level": "high",
+      "write_capable": false,
+      "description": "Add an opt-in model-backed read-only manager/reviewer that reads deterministic artifacts and writes advisory central reports only."
     }
   ]
 }
