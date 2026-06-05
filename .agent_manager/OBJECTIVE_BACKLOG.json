@@ -68,11 +68,21 @@
       "id": "phase11_morning_report_and_plan_update",
       "title": "Create morning report and weekly plan updater",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 11",
       "risk_level": "medium",
       "write_capable": false,
       "description": "Create central morning report and project weekly-plan update workflow using deterministic artifacts only."
+    },
+    {
+      "id": "phase12_langgraph_migration",
+      "title": "Migrate plain runner flow to LangGraph",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 12",
+      "risk_level": "high",
+      "write_capable": false,
+      "description": "Create a checkpoint-capable LangGraph runner that reproduces the existing deterministic artifact flow without OpenHands/model execution."
     }
   ]
 }
