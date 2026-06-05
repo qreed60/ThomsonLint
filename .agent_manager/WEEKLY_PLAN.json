@@ -3,8 +3,8 @@
   "week_id": "2026-W23",
   "created_date": "2026-06-05",
   "project_id": "thomsonlint",
-  "current_phase": "Phase 15: multi-model routing",
-  "primary_goal": "Add deterministic model-role routing scaffold while preserving one write-capable objective and validation authority.",
+  "current_phase": "Phase 16: time-boxed multi-pass LangGraph loop",
+  "primary_goal": "Add bounded overnight window control: 11 PM start, 5:30 AM no-new-work cutoff, 6 AM hard stop.",
   "hard_gates": {
     "no_model_calls": true,
     "no_openhands_execution": true,
@@ -15,11 +15,11 @@
   },
   "objectives": [
     {
-      "id": "phase15_multi_model_routing",
+      "id": "phase16_timeboxed_langgraph_loop",
       "priority": 1,
       "status": "active",
-      "description": "Create model role registry, routing rules, and task packet model assignment artifacts without model calls by default.",
-      "success_metric": "Task graph records model assignments, validation passes, and no new write permissions are introduced.",
+      "description": "Create time-boxed LangGraph loop policy and artifacts without AI/model/OpenHands execution by default.",
+      "success_metric": "Nightly window artifacts are generated, time cutoffs are enforced, validation passes, and no source writes occur.",
       "write_capable": false
     }
   ],
