@@ -148,11 +148,21 @@
       "id": "phase18a_model_backed_readonly_agent",
       "title": "Add first model-backed read-only agent",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 18A",
       "risk_level": "high",
       "write_capable": false,
       "description": "Add an opt-in model-backed read-only manager/reviewer that reads deterministic artifacts and writes advisory central reports only."
+    },
+    {
+      "id": "phase18b_controlled_openhands_coder_execution",
+      "title": "Add controlled OpenHands coder execution",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 18B",
+      "risk_level": "high",
+      "write_capable": true,
+      "description": "Add explicit opt-in OpenHands coder execution in an isolated worktree only, with no auto-push, no auto-merge, and no writes to the canonical target repo."
     }
   ]
 }

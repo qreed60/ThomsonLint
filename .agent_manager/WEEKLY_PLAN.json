@@ -3,7 +3,7 @@
   "week_id": "2026-W23",
   "created_date": "2026-06-05",
   "project_id": "thomsonlint",
-  "current_phase": "Phase 16.5: systemd nightly launcher",
+  "current_phase": "Phase 18B: controlled OpenHands coder execution",
   "primary_goal": "Add an installable 11 PM systemd timer for the deterministic nightly window.",
   "hard_gates": {
     "no_model_calls": true,
@@ -15,12 +15,12 @@
   },
   "objectives": [
     {
-      "id": "phase18a_model_backed_readonly_agent",
+      "id": "phase18b_controlled_openhands_coder_execution",
       "priority": 1,
       "status": "active",
-      "description": "Create the first model-backed read-only manager/reviewer with explicit opt-in model-call controls.",
-      "success_metric": "AI read-only review artifacts are generated without source writes, OpenHands execution, auto-push, or auto-merge.",
-      "write_capable": false
+      "description": "Create a controlled OpenHands coder runner that defaults to dry-run/task-packet generation and only runs OpenHands with explicit human opt-in inside an isolated worktree.",
+      "success_metric": "OpenHands task packet and optional coder execution artifacts validate, canonical target repo remains untouched, and no push/merge/PR occurs.",
+      "write_capable": true
     }
   ],
   "updated_date": "2026-06-05"
