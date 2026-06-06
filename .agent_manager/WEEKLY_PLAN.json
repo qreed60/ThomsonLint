@@ -15,12 +15,12 @@
   },
   "objectives": [
     {
-      "id": "phase18b_controlled_openhands_coder_execution",
+      "id": "phase18b_headless_openhands_smoke_review",
       "priority": 1,
       "status": "active",
-      "description": "Create a controlled OpenHands coder runner that defaults to dry-run/task-packet generation and only runs OpenHands with explicit human opt-in inside an isolated worktree.",
-      "success_metric": "OpenHands task packet and optional coder execution artifacts validate, canonical target repo remains untouched, and no push/merge/PR occurs.",
-      "write_capable": true
+      "description": "Review the Phase 18B headless OpenHands timeout and keep the overnight manager deterministic until a tiny OpenHands smoke task exits cleanly.",
+      "success_metric": "Nightly deterministic window passes, canonical repo remains clean, and no OpenHands/model/write gate is enabled.",
+      "write_capable": false
     }
   ],
   "updated_date": "2026-06-05"

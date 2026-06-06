@@ -158,11 +158,21 @@
       "id": "phase18b_controlled_openhands_coder_execution",
       "title": "Add controlled OpenHands coder execution",
       "priority": 1,
-      "status": "active",
+      "status": "complete",
       "phase": "Phase 18B",
       "risk_level": "high",
       "write_capable": true,
       "description": "Add explicit opt-in OpenHands coder execution in an isolated worktree only, with no auto-push, no auto-merge, and no writes to the canonical target repo."
+    },
+    {
+      "id": "phase18b_headless_openhands_smoke_review",
+      "title": "Review Phase 18B headless OpenHands smoke results",
+      "priority": 1,
+      "status": "active",
+      "phase": "Phase 18B",
+      "risk_level": "medium",
+      "write_capable": false,
+      "description": "Review the headless OpenHands timeout behavior, preserve deterministic nightly operation, and define the next bounded smoke-test fix before enabling overnight write-capable execution."
     }
   ]
 }
