@@ -1,4 +1,4 @@
-import json, subprocess, sys
+import json, subprocess, sys, tarfile
 from pathlib import Path
 
 PADS = """*PART*
@@ -134,6 +134,70 @@ def test_phase2_bom_simple_and_multi_refdes(tmp_path):
     assert bom["expanded_refdes_count"] == 5
     assert bom["items"][0]["fields"]["dnp"] is False
     assert bom["items"][1]["fields"]["dnp"] is True
+
+
+ALTIUM_GROUPED_BOM = (
+    "LibRef,Name,Description,Designator,Footprint,Quantity,Revision,MFG_Name,MFG_PN,MFG1_Name,MFG1_PN,MFG2_Name,MFG2_PN,MFG3_Name,MFG3_PN,MFG4_Name,MFG4_PN\n"
+    "\"CMP-CAP-0042-11, CMP-CAP-0042-10\",\"Cap 4.7uF 10V 20% X5R 0402\",\"4.7uF 10V\",\"C3, C5, C9, C16, C18, C22, C33\",\"C0402-Med-0.7\",\"7\",\"\",\"Samsung\",\"CL05A475MP5NRNC\",\"Murata\",\"GRM155R61A475MEAAD\",\"Yageo\",\"CC0402MRX5R6BB475\",\"Cal-Chip\",\"GMC04X5R475M10NT\",\"\",\"\"\n"
+)
+
+
+def test_altium_grouped_bom_parses_expands_and_preserves_alternates(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "babel_bom.csv").write_text(ALTIUM_GROUPED_BOM)
+    out = tmp_path / "out"
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+
+    bom = json.loads((out / "proj-bom.json").read_text())
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    assert bom["source_format"] == "altium_grouped_bom"
+    assert report["selected_bom_path"].endswith("babel_bom.csv")
+    assert report["bom_source_format"] == "altium_grouped_bom"
+    assert bom["expanded_refdes_count"] == 7
+    assert {c["refdes"] for c in bom["components"]} == {"C3", "C5", "C9", "C16", "C18", "C22", "C33"}
+    first = bom["components"][0]
+    assert first["libref"] == "CMP-CAP-0042-11, CMP-CAP-0042-10"
+    assert first["manufacturer"] == "Samsung"
+    assert first["mpn"] == "CL05A475MP5NRNC"
+    assert len(first["manufacturer_alternates"]) == 3
+    assert first["raw_fields"]["Footprint"] == "C0402-Med-0.7"
+
+
+def test_altium_grouped_bom_quantity_mismatch_warns(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "odd_bom.csv").write_text(
+        "LibRef,Name,Designator,Quantity,MFG_Name,MFG_PN\n"
+        "P,Part,\"R1, R2\",3,Acme,PN1\n"
+    )
+    out = tmp_path / "out"
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    warnings = report["bom_quantity_mismatch_warnings"]
+    assert len(warnings) == 1
+    assert warnings[0]["quantity"] == 3
+    assert warnings[0]["expanded_designator_count"] == 2
+
+
+def test_bom_candidate_parse_failure_is_reported_not_placeholder(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "real_bom.csv").write_text("Part,Value\n1,MCU\n")
+    out = tmp_path / "out"
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    codes = {e["code"] for e in report["errors"]}
+    assert "ERR_BOM_MISSING_REFDES_HEADER" in codes
+    assert report["selected_bom_path"].endswith("real_bom.csv")
+    warn_codes = {w["code"] for w in report["warnings"]}
+    assert "WARN_BOM_MISSING" not in warn_codes
 
 
 def test_phase2_bom_duplicate_refdes(tmp_path):
@@ -996,6 +1060,13 @@ def _build_odb_fixture(root):
        "L 10.0 0.0 11.0 0.0 0 P 0\n")  # feat_idx 0 -> None
 
 
+def _write_odb_tgz(src_dir, archive_path):
+    with tarfile.open(archive_path, "w:gz") as tf:
+        for f in sorted(src_dir.rglob("*")):
+            if f.is_file():
+                tf.add(f, arcname=(Path("odb") / f.relative_to(src_dir)).as_posix())
+
+
 def _import_odbpp():
     import importlib.util, sys
     root = Path(__file__).resolve().parents[1]
@@ -1012,6 +1083,54 @@ def test_odbpp_parser_segment_count(tmp_path):
     mod = _import_odbpp()
     parser = mod.ODBppParser(tmp_path)
     assert len(parser.route_segments) == 4
+
+
+def test_bundle_converter_discovers_space_named_odb_archive_and_prefers_over_ipc(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    odb_dir = tmp_path / "odb-src"
+    _build_odb_fixture(odb_dir)
+    _write_odb_tgz(odb_dir, proj / "Babel Fish.tgz")
+    (proj / "babel_ipc.xml").write_text(XML)
+    out = tmp_path / "out"
+
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    brd = json.loads((out / "proj-thomson-export-brd.json").read_text())
+    stack = json.loads((out / "proj-thomson-export-stack.json").read_text())
+    cats = report["discovery"]["counts_by_category"]
+    assert cats["odbpp_candidate"] == 1
+    assert report["selected_board_path"].endswith("Babel Fish.tgz")
+    assert report["board_source_format"] == "odb++"
+    assert report["used_odb_preferred_over_ipc"] is True
+    assert brd["board_source_format"] == "odb++"
+    assert brd["source"]["format"] == "odb++"
+    assert stack["stack_source_format"] == "odb++"
+    assert report["ipc_fallback_reason"] is None
+
+
+def test_bundle_converter_uses_ipc_fallback_when_odb_archive_invalid(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    with tarfile.open(proj / "Babel Fish.tgz", "w:gz") as tf:
+        bogus = tmp_path / "not_odb.txt"
+        bogus.write_text("not odb")
+        tf.add(bogus, arcname="not_odb.txt")
+    (proj / "babel_ipc.xml").write_text(XML)
+    out = tmp_path / "out"
+
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    brd = json.loads((out / "proj-thomson-export-brd.json").read_text())
+    assert report["board_source_format"] == "ipc2581"
+    assert report["selected_board_path"].endswith("babel_ipc.xml")
+    assert report["used_odb_preferred_over_ipc"] is False
+    assert report["ipc_fallback_reason"]
+    assert brd["source"]["format"] == "ipc2581"
 
 
 def test_odbpp_parser_net_attribution(tmp_path):

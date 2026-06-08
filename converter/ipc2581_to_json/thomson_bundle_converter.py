@@ -136,15 +136,56 @@ def scan_files(project_root: Path, schematic_dir: Path, layout_dir: Path) -> lis
     seen: set[Path] = set()
     for directory, hint in [(schematic_dir, "schematic"), (layout_dir, "layout")]:
         if directory.exists() and directory.is_dir():
-            for p in sorted(directory.iterdir()):
+            for p in sorted(directory.rglob("*")):
                 if p.is_file() and p.resolve() not in seen:
                     files.append(classify_file(p, project_root, hint))
                     seen.add(p.resolve())
+                elif p.is_dir() and p.resolve() not in seen:
+                    classified = classify_odbpp_directory(p, project_root)
+                    if classified:
+                        files.append(classified)
+                        seen.add(p.resolve())
     if not files:
-        for p in sorted(project_root.iterdir()):
+        for p in sorted(project_root.rglob("*")):
             if p.is_file():
                 files.append(classify_file(p, project_root, "unknown"))
+            elif p.is_dir():
+                classified = classify_odbpp_directory(p, project_root)
+                if classified:
+                    files.append(classified)
     return files
+
+
+def _odbpp_path_names(path: Path) -> set[str]:
+    names: set[str] = set()
+    for p in path.rglob("*"):
+        if p.is_file():
+            names.add(p.relative_to(path).as_posix().lower())
+    if "odb/matrix/matrix" in names:
+        names |= {n[4:] for n in names if n.startswith("odb/")}
+    return names
+
+
+def _has_odbpp_layout(names: set[str]) -> bool:
+    required = {"matrix/matrix"}
+    strong_dirs = {"steps/", "fonts/", "misc/", "symbols/", "netlists/"}
+    if not required.issubset(names):
+        return False
+    return any(any(n.startswith(prefix) for n in names) for prefix in strong_dirs)
+
+
+def classify_odbpp_directory(path: Path, root: Path) -> ClassifiedFile | None:
+    name = path.name.lower()
+    if name not in {"odb", "odb++"} and path.suffix.lower() != ".odb":
+        return None
+    try:
+        names = _odbpp_path_names(path)
+    except Exception:
+        return None
+    if not _has_odbpp_layout(names):
+        return None
+    rel = path.relative_to(root).as_posix()
+    return ClassifiedFile(rel, "", 0, "odbpp_candidate", "high", "Directory contents match ODB++ layout")
 
 
 def planned_outputs(project_name: str, output_root: Path) -> list[str]:
@@ -159,9 +200,14 @@ def _norm(s: str) -> str:
 
 
 HEADER_MAP = {
-    "refdes": "refdes", "designator": "refdes", "reference": "refdes", "references": "refdes",
-    "value": "value", "description": "description", "manufacturer": "manufacturer", "mpn": "mpn", "manufacturerpartnumber": "mpn",
-    "vendor": "vendor", "vendorpn": "vendor_pn", "quantity": "quantity", "qty": "quantity", "footprint": "footprint", "package": "package",
+    "refdes": "refdes", "ref": "refdes", "designator": "refdes", "designators": "refdes", "reference": "refdes", "references": "refdes",
+    "comment": "value", "name": "value", "value": "value", "description": "description",
+    "manufacturer": "manufacturer", "mfr": "manufacturer", "mfgname": "manufacturer",
+    "mpn": "mpn", "manufacturerpartnumber": "mpn", "mfrpartnumber": "mpn", "mfgpn": "mpn",
+    "supplier": "vendor", "vendor": "vendor", "vendorpn": "vendor_pn", "supplierpartnumber": "vendor_pn", "supplierpn": "vendor_pn",
+    "quantity": "quantity", "qty": "quantity", "footprint": "footprint", "package": "package", "pcbfootprint": "footprint",
+    "libref": "libref", "libraryref": "libref", "revision": "revision", "voltage": "voltage", "voltagerating": "voltage",
+    "tolerance": "tolerance", "note": "notes", "notes": "notes",
     "dni": "dnp", "dnp": "dnp", "donotinstall": "dnp", "part": "item", "item": "item",
     "mfg1": "manufacturer", "mfg2": "manufacturer", "mfg3": "manufacturer",
     "mfgpn1": "mpn", "mfgpn2": "mpn", "mfgpn3": "mpn",
@@ -204,8 +250,24 @@ def parse_bool(v: str) -> bool | None:
     return None
 
 
+_REFDES_TOKEN_RE = re.compile(r"^[A-Za-z]{1,8}\d+[A-Za-z0-9]*$")
+
+
+def _is_refdes_like(token: str) -> bool:
+    if _REFDES_TOKEN_RE.match(token):
+        return True
+    return bool(re.match(r"^[A-Za-z]+\d+-([A-Za-z]+)?\d+$", token))
+
+
 def expand_refdes_cell(cell: str, warnings: list[dict[str, Any]]) -> list[str]:
-    tokens = [t for t in re.split(r"[;,\s]+", cell.strip()) if t]
+    raw = cell.strip()
+    if not raw:
+        return []
+    if "," in raw or ";" in raw:
+        tokens = [t.strip() for t in re.split(r"[;,]+", raw) if t.strip()]
+    else:
+        whitespace_tokens = [t for t in raw.split() if t]
+        tokens = whitespace_tokens if len(whitespace_tokens) > 1 and all(_is_refdes_like(t) for t in whitespace_tokens) else [raw]
     out: list[str] = []
     for tok in tokens:
         m = re.match(r"^([A-Za-z]+)(\d+)-([A-Za-z]+)?(\d+)$", tok)
@@ -228,29 +290,42 @@ def expand_refdes_cell(cell: str, warnings: list[dict[str, Any]]) -> list[str]:
 
 def parse_bom(project_name: str, project_root: Path, files: list[ClassifiedFile]) -> dict[str, Any]:
     warnings: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
     candidates = sorted([f for f in files if f.category == "bom_csv_candidate"], key=lambda f: f.relative_path)
     if not candidates:
         warnings.append({"code": "WARN_BOM_MISSING", "message": "No BOM CSV candidate discovered."})
-        return {"project_name": project_name, "source_file": None, "parser_version": BOM_PARSER_VERSION, "raw_headers": [], "normalized_headers": {}, "row_count": 0, "expanded_refdes_count": 0, "duplicate_refdes": [], "warnings": warnings, "items": []}
+        return {"project_name": project_name, "source_file": None, "source_path": None, "source_format": None, "parser_version": BOM_PARSER_VERSION, "raw_headers": [], "normalized_headers": {}, "row_count": 0, "expanded_refdes_count": 0, "duplicate_refdes": [], "warnings": warnings, "errors": errors, "items": [], "components": []}
     source = candidates[0]
     # OMIT: WARN_BOM_MULTIPLE_CANDIDATES - file discovery diagnostic, not actionable
     # if len(candidates) > 1:
     #     warnings.append({"code": "WARN_BOM_MULTIPLE_CANDIDATES", "message": f"Multiple BOM CSV candidates found ({len(candidates)}); using {source.relative_path}"})
 
-    text = (project_root / source.relative_path).read_text(encoding="utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(text))
+    source_path = project_root / source.relative_path
+    try:
+        text = source_path.read_text(encoding="utf-8-sig", errors="replace")
+        reader = csv.DictReader(io.StringIO(text))
+    except Exception as exc:
+        errors.append({"code": "ERR_BOM_PARSE_FAILED", "message": f"BOM candidate could not be parsed: {source.relative_path}: {exc}"})
+        return {"project_name": project_name, "source_file": source.relative_path, "source_path": str(source_path), "source_format": None, "parser_version": BOM_PARSER_VERSION, "raw_headers": [], "normalized_headers": {}, "row_count": 0, "expanded_refdes_count": 0, "duplicate_refdes": [], "warnings": warnings, "errors": errors, "items": [], "components": []}
     raw_headers = reader.fieldnames or []
     normalized_headers = {h: HEADER_MAP.get(_norm(h), "unknown") for h in raw_headers}
     ref_cols = [h for h, n in normalized_headers.items() if n == "refdes"]
     if not ref_cols:
-        warnings.append({"code": "WARN_BOM_MISSING_REFDES_HEADER", "message": "No recognized RefDes/Designator/Reference column found."})
+        errors.append({"code": "ERR_BOM_MISSING_REFDES_HEADER", "message": f"BOM candidate cannot be parsed as components because no recognized RefDes/Designator/Reference column was found: {source.relative_path}"})
+
+    source_format = "altium_grouped_bom" if {"LibRef", "Name", "Designator", "MFG_Name", "MFG_PN"}.issubset(set(raw_headers)) else "legacy_bom_csv"
 
     items = []
+    components = []
     ref_counts: dict[str, int] = {}
     # Identify known/standard headers for custom column preservation
     standard_normalized = set(HEADER_MAP.values())
     
-    for idx, row in enumerate(reader, start=1):
+    parsed_row_count = 0
+    for idx, row in enumerate(reader, start=2):
+        if not row or not any((v or "").strip() for v in row.values() if isinstance(v, str)):
+            continue
+        parsed_row_count += 1
         ref_cell = ((row.get(ref_cols[0]) if ref_cols else "") or "").strip()
         refs = expand_refdes_cell(ref_cell, warnings) if ref_cell else []
         for r in refs:
@@ -295,15 +370,15 @@ def parse_bom(project_name: str, project_root: Path, files: list[ClassifiedFile]
                     custom_metadata[header] = cell_value
 
         manufacturer_alternates: list[dict[str, Any]] = []
-        for rank in (1, 2, 3):
+        for rank in (1, 2, 3, 4):
             mfg_candidates = [
-                f"MFG_{rank}", f"MFG {rank}", f"Manufacturer_{rank}", f"Manufacturer {rank}"
+                f"MFG{rank}_Name", f"MFG_{rank}", f"MFG {rank}", f"Manufacturer_{rank}", f"Manufacturer {rank}"
             ]
             mpn_candidates = [
-                f"MFG P/N_{rank}", f"MFG P/N {rank}", f"MPN_{rank}", f"Manufacturer Part Number_{rank}"
+                f"MFG{rank}_PN", f"MFG P/N_{rank}", f"MFG P/N {rank}", f"MPN_{rank}", f"Manufacturer Part Number_{rank}"
             ]
-            mfg_val = next(((row.get(h) or "").strip() for h in mfg_candidates if (row.get(h) or "").strip()), None)
-            mpn_val = next(((row.get(h) or "").strip() for h in mpn_candidates if (row.get(h) or "").strip()), None)
+            mfg_val = next(((row.get(h) or "").strip() for h in mfg_candidates if h in row and (row.get(h) or "").strip()), None)
+            mpn_val = next(((row.get(h) or "").strip() for h in mpn_candidates if h in row and (row.get(h) or "").strip()), None)
             if mfg_val or mpn_val:
                 manufacturer_alternates.append({"manufacturer": mfg_val, "mpn": mpn_val, "rank": rank})
 
@@ -313,6 +388,22 @@ def parse_bom(project_name: str, project_root: Path, files: list[ClassifiedFile]
             primary_manufacturer = manufacturer_alternates[0].get("manufacturer")
         if not primary_mpn and manufacturer_alternates:
             primary_mpn = manufacturer_alternates[0].get("mpn")
+
+        qty_int: int | None = None
+        if qty_raw:
+            try:
+                qty_int = int(float(qty_raw.strip()))
+            except ValueError:
+                qty_int = None
+        quantity_matches_refdes_count = qty_int == len(refs) if qty_int is not None else None
+        if qty_int is not None and refs and qty_int != len(refs):
+            warnings.append({
+                "code": "WARN_BOM_QUANTITY_REFDES_COUNT_MISMATCH",
+                "message": f"BOM row {idx} quantity {qty_int} does not match expanded designator count {len(refs)}.",
+                "source_row_number": idx,
+                "quantity": qty_int,
+                "expanded_designator_count": len(refs),
+            })
 
         # Aerospace & high-reliability field extraction (Appendix K)
         mass_raw = pick("mass_g")
@@ -349,13 +440,25 @@ def parse_bom(project_name: str, project_root: Path, files: list[ClassifiedFile]
                     if res_match:
                         explicit_value = res_match.group(1).replace(" ", "")
         
-        items.append({
+        footprint_value = pick("footprint")
+        package_value = pick("package") or footprint_value
+        fields = {
+            "value": explicit_value, "name": explicit_value, "comment": explicit_value,
+            "description": pick("description"), "manufacturer": pick("manufacturer"),
+            "mpn": pick("mpn"), "vendor": pick("vendor"), "vendor_pn": pick("vendor_pn"),
+            "quantity": pick("quantity"), "footprint": footprint_value, "package": package_value, "libref": pick("libref"),
+            "revision": pick("revision"), "voltage": pick("voltage"), "tolerance": pick("tolerance"), "notes": pick("notes"),
+            "dnp": dnp_val,
+        }
+        item = {
             "refdes": refs,
-            "fields": {
-                "value": explicit_value, "description": pick("description"), "manufacturer": pick("manufacturer"),
-                "mpn": pick("mpn"), "vendor": pick("vendor"), "vendor_pn": pick("vendor_pn"),
-                "quantity": pick("quantity"), "footprint": pick("footprint"), "package": pick("package"), "dnp": dnp_val,
-            },
+            "grouped_designators": refs,
+            "source_format": source_format,
+            "source_path": str(source_path),
+            "source_row_number": idx,
+            "raw_fields": dict(row),
+            "quantity_matches_refdes_count": quantity_matches_refdes_count,
+            "fields": fields,
             "aerospace_hi_rel": {
                 "component_mass_g": mass_g,
                 "mass_data_source": "bom_csv" if mass_g is not None else None,
@@ -366,11 +469,37 @@ def parse_bom(project_name: str, project_root: Path, files: list[ClassifiedFile]
                 "data_source_required": "datasheet or user metadata" if (mass_g is None and not solder_alloy and not lead_finish_explicit and not lead_finish_from_mpn["lead_finish_detected"]) else None,
             },
             "manufacturers": manufacturer_alternates,
+            "manufacturer_alternates": manufacturer_alternates,
             "custom_metadata": custom_metadata if custom_metadata else None,
             "raw_row_index": idx,
-        })
+        }
+        items.append(item)
         items[-1]["fields"]["manufacturer"] = primary_manufacturer
         items[-1]["fields"]["mpn"] = primary_mpn
+
+        for rd in refs:
+            components.append({
+                "refdes": rd,
+                "value": explicit_value,
+                "name": explicit_value,
+                "comment": explicit_value,
+                "description": pick("description"),
+                "libref": pick("libref"),
+                "library_ref": pick("libref"),
+                "footprint": footprint_value,
+                "package": package_value,
+                "quantity": pick("quantity"),
+                "manufacturer": primary_manufacturer,
+                "mpn": primary_mpn,
+                "manufacturer_alternates": manufacturer_alternates,
+                "revision": pick("revision"),
+                "raw_fields": dict(row),
+                "source_format": source_format,
+                "source_path": str(source_path),
+                "source_row_number": idx,
+                "grouped_designators": refs,
+                "quantity_matches_refdes_count": quantity_matches_refdes_count,
+            })
 
     duplicates = sorted([k for k, v in ref_counts.items() if v > 1])
     if duplicates:
@@ -379,14 +508,18 @@ def parse_bom(project_name: str, project_root: Path, files: list[ClassifiedFile]
     return {
         "project_name": project_name,
         "source_file": source.relative_path,
+        "source_path": str(source_path),
+        "source_format": source_format,
         "parser_version": BOM_PARSER_VERSION,
         "raw_headers": raw_headers,
         "normalized_headers": normalized_headers,
-        "row_count": len(items),
+        "row_count": parsed_row_count,
         "expanded_refdes_count": sum(len(i["refdes"]) for i in items),
         "duplicate_refdes": duplicates,
         "warnings": warnings,
+        "errors": errors,
         "items": items,
+        "components": components,
     }
 
 
@@ -3061,6 +3194,230 @@ def parse_ipc2581(project_root: Path, files: list[ClassifiedFile]) -> dict[str, 
     return {"source_file":src.relative_path,"parser_version":IPC_PARSER_VERSION,"ipc_root":ipc_root,"ipc_revision":rev,"namespace":ns,"units":units,"components":components,"nets":nets,"physical_nets":physical_nets,"pin_to_net_map":pin_to_net_map,"layers":layers,"stackup_layers":stack,"stackup_data_quality":stackup_data_quality,"outline":outline,"vias":vias,"drills":drills,"holes":holes,"via_holes":via_holes,"plated_holes":plated_holes,"nonplated_holes":nonplated_holes,"drill_hole_summary":drill_hole_summary,"package_geometry_summary":package_geometry_summary,"package_land_patterns":package_land_patterns,"route_segments":routes,"analysis":analysis,"warnings":warnings,"extraction_counts":counts,"kb_driven_analysis":kb_driven_analysis,**geometry}
 
 
+def _parse_odbpp_matrix_layers(parser: Any) -> list[dict[str, Any]]:
+    text = parser._read_text("matrix/matrix") if hasattr(parser, "_read_text") else None
+    if not text:
+        return []
+    layers: list[dict[str, Any]] = []
+    current: dict[str, str] = {}
+    in_layer = False
+
+    def _flush(cur: dict[str, str]) -> None:
+        if not cur.get("NAME"):
+            return
+        try:
+            row = int(cur.get("ROW", "999"))
+        except ValueError:
+            row = 999
+        layers.append({
+            "name": cur.get("NAME", "").lower(),
+            "type": cur.get("TYPE"),
+            "function": cur.get("TYPE"),
+            "side": "top" if "TOP" in cur.get("NAME", "").upper() else ("bottom" if "BOTTOM" in cur.get("NAME", "").upper() else None),
+            "polarity": cur.get("POLARITY"),
+            "sequence": row,
+            "context": cur.get("CONTEXT"),
+            "dielectric_type": cur.get("DIELECTRIC_TYPE"),
+            "dielectric_name": cur.get("DIELECTRIC_NAME"),
+            "source": "odb++.matrix",
+        })
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line == "LAYER {":
+            if in_layer:
+                _flush(current)
+            current = {}
+            in_layer = True
+        elif line == "}" and in_layer:
+            _flush(current)
+            current = {}
+            in_layer = False
+        elif in_layer and "=" in line:
+            k, _, v = line.partition("=")
+            current[k.strip()] = v.strip()
+    if in_layer and current:
+        _flush(current)
+    return sorted(layers, key=lambda r: r.get("sequence") or 999)
+
+
+def _parse_odbpp_components(parser: Any) -> list[dict[str, Any]]:
+    components: list[dict[str, Any]] = []
+    files = getattr(parser, "_files", {})
+    comp_keys = sorted(k for k in files if k.endswith("/components"))
+    cmp_re = re.compile(r"^CMP\s+\S+\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+\S+\s+(\S+)\s+(.+?)(?:\s+;|$)")
+    prp_re = re.compile(r"^PRP\s+(\S+)\s+'(.*)'$")
+    for key in comp_keys:
+        text = parser._read_text(key)
+        if not text:
+            continue
+        layer_name = key.split("/")[-2]
+        current: dict[str, Any] | None = None
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or line.startswith("@") or line.startswith("&") or line.startswith("UNITS="):
+                continue
+            m = cmp_re.match(line)
+            if m:
+                if current:
+                    components.append(current)
+                x, y, rotation, refdes, footprint = m.groups()
+                side = "bottom" if "bot" in layer_name.lower() or "bottom" in layer_name.lower() else "top"
+                current = {
+                    "refdes": refdes,
+                    "footprint": footprint.strip(),
+                    "part_number": None,
+                    "layer": layer_name,
+                    "side": side,
+                    "x": float(x),
+                    "y": float(y),
+                    "rotation": float(rotation),
+                    "attributes": {},
+                    "source": {"format": "odb++", "file": parser.source_path.name, "component_layer": layer_name},
+                }
+                continue
+            if current and line.startswith("PRP "):
+                pm = prp_re.match(line)
+                if pm:
+                    name, value = pm.groups()
+                    current["attributes"][name] = value
+                    if name in {"MFG_PN", "MPN", "PartNumber"} and not current.get("part_number"):
+                        current["part_number"] = value
+                    if name == "Value":
+                        current["value"] = value
+        if current:
+            components.append(current)
+    return sorted(components, key=lambda r: r.get("refdes") or "")
+
+
+def _parse_odbpp_outline(parser: Any) -> list[dict[str, Any]]:
+    text = parser._read_text("steps/pcb/profile") if hasattr(parser, "_read_text") else None
+    if not text:
+        return []
+    outline: list[dict[str, Any]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith(("OB ", "OS ")):
+            parts = line.split()
+            if len(parts) >= 3:
+                try:
+                    outline.append({"x": float(parts[1]), "y": float(parts[2]), "source": "odb++.profile"})
+                except ValueError:
+                    continue
+    return outline
+
+
+def parse_odbpp(project_root: Path, files: list[ClassifiedFile]) -> dict[str, Any]:
+    warnings: list[dict[str, Any]] = []
+    candidates = sorted([f for f in files if f.category == "odbpp_candidate"], key=lambda f: f.relative_path)
+    if not candidates:
+        warnings.append({"code": "WARN_ODBPP_MISSING", "message": "No valid ODB++ candidate discovered."})
+        return {"source_file": None, "source_format": None, "parser_version": "odbpp-v1", "components": [], "nets": [], "layers": [], "stackup_layers": [], "outline": [], "route_segments": [], "warnings": warnings, "errors": [], "extraction_counts": {"board_component_count": 0, "placement_count": 0, "board_net_count": 0, "layer_count": 0, "stackup_layer_count": 0, "route_segment_count": 0, "outline_point_count": 0}}
+    src = candidates[0]
+    try:
+        from odbpp_to_thomson import ODBppParser  # noqa: PLC0415
+        parser = ODBppParser(project_root / src.relative_path)
+    except Exception as exc:
+        return {"source_file": src.relative_path, "source_path": str(project_root / src.relative_path), "source_format": None, "parser_version": "odbpp-v1", "components": [], "nets": [], "layers": [], "stackup_layers": [], "outline": [], "route_segments": [], "warnings": warnings, "errors": [{"code": "ERR_ODBPP_PARSE_FAILED", "message": f"ODB++ candidate parse failed: {src.relative_path}: {exc}"}], "extraction_counts": {"board_component_count": 0, "placement_count": 0, "board_net_count": 0, "layer_count": 0, "stackup_layer_count": 0, "route_segment_count": 0, "outline_point_count": 0}}
+
+    layers = _parse_odbpp_matrix_layers(parser)
+    components = _parse_odbpp_components(parser)
+    outline = _parse_odbpp_outline(parser)
+    nets = [{"name": n, "node_count": None, "nodes": [], "source": "odb++.cadnet"} for n in sorted(getattr(parser, "_net_by_index", {}).values()) if n != "$NONE$"]
+    feature_counts = []
+    for key, data in sorted(getattr(parser, "_files", {}).items()):
+        if key.startswith("steps/pcb/layers/") and key.endswith("/features"):
+            text = data.decode("utf-8", errors="replace")
+            layer = key.split("/")[-2]
+            feature_counts.append({
+                "layer": layer,
+                "line_count": sum(1 for ln in text.splitlines() if ln.strip().startswith(("L ", "A "))),
+                "pad_count": sum(1 for ln in text.splitlines() if ln.strip().startswith("P ")),
+                "surface_count": sum(1 for ln in text.splitlines() if ln.strip().startswith("S ")),
+            })
+    extraction_warnings = []
+    if not components:
+        extraction_warnings.append({"code": "WARN_ODBPP_COMPONENTS_UNAVAILABLE", "message": "No component placements extracted from ODB++ components files."})
+    if not outline:
+        extraction_warnings.append({"code": "WARN_ODBPP_OUTLINE_UNAVAILABLE", "message": "No board outline points extracted from ODB++ profile."})
+
+    counts = {
+        "board_component_count": len(components),
+        "placement_count": len(components),
+        "placements_with_xy_count": sum(1 for c in components if c.get("x") is not None and c.get("y") is not None),
+        "board_net_count": len(nets),
+        "logical_net_count": len(nets),
+        "physical_net_count": 0,
+        "phy_net_point_count": 0,
+        "layer_count": len(layers),
+        "stackup_layer_count": len(layers),
+        "route_segment_count": len(parser.route_segments),
+        "outline_point_count": len(outline),
+        "copper_route_count": len(parser.route_segments),
+        "routed_net_count": len(parser.routed_nets),
+        "drill_count": sum(1 for row in feature_counts if "drill" in row["layer"].lower()),
+        "via_count": 0,
+    }
+    stackup_data_quality = {
+        "layer_names_available": bool(layers),
+        "layer_order_available": bool(layers),
+        "layer_function_available": any(l.get("type") for l in layers),
+        "material_thickness_available": False,
+        "source": "odb++",
+        "warnings": ["ODB++ matrix provides layer names/types; material thickness details are unavailable unless supplied by a stackup file."],
+    }
+    return {
+        "source_file": src.relative_path,
+        "source_path": str(project_root / src.relative_path),
+        "source_format": "odb++",
+        "parser_version": "odbpp-v1",
+        "ipc_root": None,
+        "ipc_revision": None,
+        "namespace": None,
+        "units": parser.units,
+        "odb_version": parser.odb_version,
+        "components": components,
+        "nets": nets,
+        "physical_nets": [],
+        "pin_to_net_map": {},
+        "layers": layers,
+        "stackup_layers": [{"name": l.get("name"), "sequence": l.get("sequence"), "type": l.get("type"), "function": l.get("function"), "material": l.get("dielectric_name"), "thickness": None, "source": "odb++.matrix"} for l in layers],
+        "stackup_data_quality": stackup_data_quality,
+        "outline": outline,
+        "vias": [],
+        "drills": [],
+        "holes": [],
+        "via_holes": [],
+        "plated_holes": [],
+        "nonplated_holes": [],
+        "drill_hole_summary": {},
+        "package_geometry_summary": {},
+        "package_land_patterns": [],
+        "route_segments": parser.route_segments,
+        "analysis": {"layer_count": len(layers), "layers_used": [l["name"] for l in layers], "ground_plane_layers": [], "signal_layers": parser.copper_layer_names},
+        "warnings": warnings + extraction_warnings,
+        "errors": [],
+        "extraction_warnings": extraction_warnings,
+        "extraction_counts": counts,
+        "routing_geometry": {"routes": parser.route_segments},
+        "routing_topology_summary": {
+            "routed_net_count": len(parser.routed_nets),
+            "nets": [],
+            "route_length_by_net": parser.route_length_by_net,
+            "trace_width_by_net": parser.trace_width_by_net,
+            "route_length_by_layer": parser.route_length_by_layer,
+            "trace_width_usage_by_layer": parser.trace_width_usage_by_layer,
+            "routing_evidence_warnings": extraction_warnings,
+        },
+        "route_length_by_layer": parser.route_length_by_layer,
+        "trace_width_usage_by_layer": parser.trace_width_usage_by_layer,
+        "route_length_by_net": parser.route_length_by_net,
+        "trace_width_by_net": parser.trace_width_by_net,
+        "feature_counts_by_layer": feature_counts,
+        "board_outline_source": "odb++.profile" if outline else None,
+    }
+
+
 def filter_board_components_to_geometry(components: list[dict[str, Any]], schematic_components: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Filter board components to retain only geometric/physical parameters.
     
@@ -3107,10 +3464,13 @@ def build_board_export(project_name:str, project_root:Path, ipc:dict[str,Any], c
     # Filter components to geometric fields only and cross-reference part_number from schematic
     raw_components = ipc.get("components", [])
     filtered_components = filter_board_components_to_geometry(raw_components, schematic_components)
-    
+    source_format = ipc.get("source_format") or "ipc2581"
+
     result = {
         "project_name": project_name,
-        "source": {"project_root": str(project_root), "layout_file": ipc.get("source_file"), "format": "ipc2581", "ipc_root": ipc.get("ipc_root"), "ipc_revision": ipc.get("ipc_revision"), "namespace": ipc.get("namespace"), "units": ipc.get("units")},
+        "board_source_format": source_format,
+        "board_source_path": ipc.get("source_path") or ipc.get("source_file"),
+        "source": {"project_root": str(project_root), "layout_file": ipc.get("source_file"), "format": source_format, "ipc_root": ipc.get("ipc_root"), "ipc_revision": ipc.get("ipc_revision"), "namespace": ipc.get("namespace"), "units": ipc.get("units"), "odb_version": ipc.get("odb_version")},
         "units": ipc.get("units"),
         "parser_version": ipc.get("parser_version"),
         "components": filtered_components,
@@ -3150,6 +3510,8 @@ def build_board_export(project_name:str, project_root:Path, ipc:dict[str,Any], c
         "fill_descriptors": ipc.get("fill_descriptors", []),
         "review_geometry_summary": ipc.get("review_geometry_summary", {}),
         "candidate_differential_or_paired_nets": ipc.get("candidate_differential_or_paired_nets", []),
+        "feature_counts_by_layer": ipc.get("feature_counts_by_layer", []),
+        "board_outline_source": ipc.get("board_outline_source"),
         "geometry_review_limitations": ipc.get("geometry_review_limitations", GEOMETRY_REVIEW_LIMITATIONS),
         "kb_driven_analysis": ipc.get("kb_driven_analysis", {
             "dfm": {"annular_rings": {}, "board_edge_clearances": {}, "fiducials": {}},
@@ -3162,24 +3524,28 @@ def build_board_export(project_name:str, project_root:Path, ipc:dict[str,Any], c
     }
     if cross_extraction:
         result["cross_extraction_summary"] = cross_extraction.get("enrichment_stats", {})
-    # ODB++ backfill: populate empty routing fields for Altium IPC-2581 boards
-    try:
-        from odbpp_to_thomson import merge_odbpp_if_available  # noqa: PLC0415
-        result = merge_odbpp_if_available(project_root, result)
-    except Exception:
-        pass
+    if source_format != "odb++":
+        # ODB++ backfill: populate empty routing fields for Altium IPC-2581 boards.
+        try:
+            from odbpp_to_thomson import merge_odbpp_if_available  # noqa: PLC0415
+            result = merge_odbpp_if_available(project_root, result)
+        except Exception:
+            pass
     return result
 
 
 def build_stack_export(project_name:str, project_root:Path, ipc:dict[str,Any])->dict[str,Any]:
     from parse_tcfx_stackup import merge_tcfx_if_available
-    
+    source_format = ipc.get("source_format") or "ipc2581"
+
     stack_data = {
         "project_name": project_name,
+        "stack_source_format": source_format,
+        "stack_source_path": ipc.get("source_path") or ipc.get("source_file"),
         "source": {
             "project_root": str(project_root),
             "layout_file": ipc.get('source_file'),
-            "format": "ipc2581"
+            "format": source_format
         },
         "parser_version": ipc.get('parser_version'),
         "units": ipc.get('units'),
@@ -3292,7 +3658,7 @@ def validate_outputs(project_root: Path, output_root: Path, project_name: str, f
     expected=[]
     if "bom_csv_candidate" in cats: expected.append(output_root / f"{project_name}-bom.json")
     if "pads_ascii_candidate" in cats: expected.append(output_root / f"{project_name}-thomson-export-sch.json")
-    if "ipc2581_candidate" in cats:
+    if "ipc2581_candidate" in cats or "odbpp_candidate" in cats:
         expected.append(output_root / f"{project_name}-thomson-export-brd.json")
         expected.append(output_root / f"{project_name}-thomson-export-stack.json")
     for e in expected:
@@ -3363,8 +3729,19 @@ def build_report(args: argparse.Namespace, project_root: Path, output_root: Path
             "project_root": str(project_root), "project_name": project_name, "output_root": str(output_root), "args": vars(args), "phase": "phase6_integrated_validation",
         },
         "discovery": {"files": [f.__dict__ for f in files], "counts_by_category": counts},
+        "selected_bom_path": bom.get("source_path") or bom.get("source_file"),
+        "bom_source_format": bom.get("source_format"),
+        "bom_parsed_row_count": bom.get("row_count", 0),
+        "bom_expanded_component_count": bom.get("expanded_refdes_count", 0),
+        "bom_quantity_mismatch_warnings": [w for w in bom.get("warnings", []) if w.get("code") == "WARN_BOM_QUANTITY_REFDES_COUNT_MISMATCH"],
+        "selected_board_path": ipc.get("source_path") or ipc.get("source_file"),
+        "board_source_format": ipc.get("source_format") or "ipc2581",
+        "board_source_path": ipc.get("source_path") or ipc.get("source_file"),
+        "used_odb_preferred_over_ipc": bool(ipc.get("used_odb_preferred_over_ipc")),
+        "ipc_fallback_reason": ipc.get("ipc_fallback_reason"),
+        "extraction_warnings": ipc.get("extraction_warnings", []),
         "bom": {
-            "source_file": bom.get("source_file"), "raw_headers": bom.get("raw_headers", []), "normalized_headers": bom.get("normalized_headers", {}),
+            "source_file": bom.get("source_file"), "source_format": bom.get("source_format"), "raw_headers": bom.get("raw_headers", []), "normalized_headers": bom.get("normalized_headers", {}),
             "row_count": bom.get("row_count", 0), "expanded_refdes_count": bom.get("expanded_refdes_count", 0),
             "duplicate_refdes_count": len(bom.get("duplicate_refdes", [])),
             "parse_warnings": bom.get("warnings", []), "output_file": str(output_root / f"{project_name}-bom.json"),
@@ -3384,12 +3761,12 @@ def build_report(args: argparse.Namespace, project_root: Path, output_root: Path
             "json_validation": {"status": "skipped" if args.dry_run or args.report_only else "pending"},
         },
         "planned_outputs": planned_outputs(project_name, output_root),
-        "ipc2581": {"source_file": ipc.get("source_file"), "root": ipc.get("ipc_root"), "revision": ipc.get("ipc_revision"), "namespace": ipc.get("namespace"), "component_count": ipc.get("extraction_counts", {}).get("board_component_count", 0), "placement_count": ipc.get("extraction_counts", {}).get("placement_count", 0), "placements_with_xy_count": ipc.get("extraction_counts", {}).get("placements_with_xy_count", 0), "net_count": ipc.get("extraction_counts", {}).get("board_net_count", 0), "logical_net_count": ipc.get("extraction_counts", {}).get("logical_net_count", 0), "physical_net_count": ipc.get("extraction_counts", {}).get("physical_net_count", 0), "phy_net_point_count": ipc.get("extraction_counts", {}).get("phy_net_point_count", 0), "layer_count": ipc.get("extraction_counts", {}).get("layer_count", 0), "stackup_layer_count": ipc.get("extraction_counts", {}).get("stackup_layer_count", 0), "via_count": ipc.get("extraction_counts", {}).get("via_count", 0), "drill_count": ipc.get("extraction_counts", {}).get("drill_count", 0), "route_segment_count": ipc.get("extraction_counts", {}).get("route_segment_count", 0), "outline_point_count": ipc.get("extraction_counts", {}).get("outline_point_count", 0), "copper_feature_extraction_enabled": True, "layerfeature_count": ipc.get("extraction_counts", {}).get("layerfeature_count", 0), "set_count": ipc.get("extraction_counts", {}).get("set_count", 0), "polyline_object_count": ipc.get("extraction_counts", {}).get("polyline_object_count", 0), "polygon_object_count": ipc.get("extraction_counts", {}).get("polygon_object_count", 0), "pad_object_count": ipc.get("extraction_counts", {}).get("pad_object_count", 0), "cutout_object_count": ipc.get("extraction_counts", {}).get("cutout_object_count", 0), "detailed_geometry_truncated": ipc.get("extraction_counts", {}).get("detailed_geometry_truncated", False), "review_geometry_summary_counts": {"copper_layers": len(ipc.get("review_geometry_summary", {}).get("copper_layers", [])), "non_copper_layers": len(ipc.get("review_geometry_summary", {}).get("non_copper_layers", [])), "net_layer_presence": len(ipc.get("review_geometry_summary", {}).get("net_layer_presence", [])), "plane_candidates": len(ipc.get("review_geometry_summary", {}).get("plane_candidates", [])), "routing_candidates": len(ipc.get("review_geometry_summary", {}).get("routing_candidates", [])), "pad_only_nets": len(ipc.get("review_geometry_summary", {}).get("pad_only_nets", [])), "candidate_differential_or_paired_nets": len(ipc.get("review_geometry_summary", {}).get("candidate_differential_or_paired_nets", []))}, "routing_topology_summary_enabled": bool(routing_topology), "routed_net_count": routing_topology.get("routed_net_count", 0), "pad_only_net_count": routing_topology.get("pad_only_net_count", 0), "paired_net_geometry_comparison_count": len(routing_topology.get("paired_net_geometry_comparison", [])), "layer_transition_candidate_count": len(routing_topology.get("layer_transition_candidates", [])), "trace_width_by_net_count": len(trace_width_by_net), "trace_width_usage_by_layer_count": len(trace_width_usage_by_layer), "route_length_summary_enabled": True, "route_length_by_net_count": len(route_length_by_net), "route_length_by_layer_count": len(route_length_by_layer), "routes_with_length_count": len(routes_with_length), "routes_with_estimated_length_count": len(routes_with_estimated_length), "paired_net_length_comparison_count": len(paired_length_comparisons), "routing_evidence_warning_count": len(routing_topology.get("routing_evidence_warnings", [])), "parse_warnings": ipc.get("warnings", []), "board_output_file": str(output_root / f"{project_name}-thomson-export-brd.json"), "stack_output_file": str(output_root / f"{project_name}-thomson-export-stack.json"), "board_json_validation": {"status": "skipped" if args.dry_run or args.report_only else "pending"}, "stack_json_validation": {"status": "skipped" if args.dry_run or args.report_only else "pending"}},
+        "ipc2581": {"source_file": ipc.get("source_file"), "source_format": ipc.get("source_format") or "ipc2581", "root": ipc.get("ipc_root"), "revision": ipc.get("ipc_revision"), "namespace": ipc.get("namespace"), "component_count": ipc.get("extraction_counts", {}).get("board_component_count", 0), "placement_count": ipc.get("extraction_counts", {}).get("placement_count", 0), "placements_with_xy_count": ipc.get("extraction_counts", {}).get("placements_with_xy_count", 0), "net_count": ipc.get("extraction_counts", {}).get("board_net_count", 0), "logical_net_count": ipc.get("extraction_counts", {}).get("logical_net_count", 0), "physical_net_count": ipc.get("extraction_counts", {}).get("physical_net_count", 0), "phy_net_point_count": ipc.get("extraction_counts", {}).get("phy_net_point_count", 0), "layer_count": ipc.get("extraction_counts", {}).get("layer_count", 0), "stackup_layer_count": ipc.get("extraction_counts", {}).get("stackup_layer_count", 0), "via_count": ipc.get("extraction_counts", {}).get("via_count", 0), "drill_count": ipc.get("extraction_counts", {}).get("drill_count", 0), "route_segment_count": ipc.get("extraction_counts", {}).get("route_segment_count", 0), "outline_point_count": ipc.get("extraction_counts", {}).get("outline_point_count", 0), "copper_feature_extraction_enabled": True, "layerfeature_count": ipc.get("extraction_counts", {}).get("layerfeature_count", 0), "set_count": ipc.get("extraction_counts", {}).get("set_count", 0), "polyline_object_count": ipc.get("extraction_counts", {}).get("polyline_object_count", 0), "polygon_object_count": ipc.get("extraction_counts", {}).get("polygon_object_count", 0), "pad_object_count": ipc.get("extraction_counts", {}).get("pad_object_count", 0), "cutout_object_count": ipc.get("extraction_counts", {}).get("cutout_object_count", 0), "detailed_geometry_truncated": ipc.get("extraction_counts", {}).get("detailed_geometry_truncated", False), "review_geometry_summary_counts": {"copper_layers": len(ipc.get("review_geometry_summary", {}).get("copper_layers", [])), "non_copper_layers": len(ipc.get("review_geometry_summary", {}).get("non_copper_layers", [])), "net_layer_presence": len(ipc.get("review_geometry_summary", {}).get("net_layer_presence", [])), "plane_candidates": len(ipc.get("review_geometry_summary", {}).get("plane_candidates", [])), "routing_candidates": len(ipc.get("review_geometry_summary", {}).get("routing_candidates", [])), "pad_only_nets": len(ipc.get("review_geometry_summary", {}).get("pad_only_nets", [])), "candidate_differential_or_paired_nets": len(ipc.get("review_geometry_summary", {}).get("candidate_differential_or_paired_nets", []))}, "routing_topology_summary_enabled": bool(routing_topology), "routed_net_count": routing_topology.get("routed_net_count", 0), "pad_only_net_count": routing_topology.get("pad_only_net_count", 0), "paired_net_geometry_comparison_count": len(routing_topology.get("paired_net_geometry_comparison", [])), "layer_transition_candidate_count": len(routing_topology.get("layer_transition_candidates", [])), "trace_width_by_net_count": len(trace_width_by_net), "trace_width_usage_by_layer_count": len(trace_width_usage_by_layer), "route_length_summary_enabled": True, "route_length_by_net_count": len(route_length_by_net), "route_length_by_layer_count": len(route_length_by_layer), "routes_with_length_count": len(routes_with_length), "routes_with_estimated_length_count": len(routes_with_estimated_length), "paired_net_length_comparison_count": len(paired_length_comparisons), "routing_evidence_warning_count": len(routing_topology.get("routing_evidence_warnings", [])), "parse_warnings": ipc.get("warnings", []), "board_output_file": str(output_root / f"{project_name}-thomson-export-brd.json"), "stack_output_file": str(output_root / f"{project_name}-thomson-export-stack.json"), "board_json_validation": {"status": "skipped" if args.dry_run or args.report_only else "pending"}, "stack_json_validation": {"status": "skipped" if args.dry_run or args.report_only else "pending"}},
         "images": images.get("report", {}),
         "image_outputs": images.get("image_outputs", []),
         "validation": {},
         "warnings": warnings + bom.get("warnings", []) + pads.get("warnings", []) + ipc.get("warnings", []) + images.get("warnings", []),
-        "errors": [],
+        "errors": bom.get("errors", []) + ipc.get("errors", []),
         "notes": [
             "Phase 1 performs discovery/reporting.", "Phase 2 adds BOM parsing.", "Phase 3 adds PADS schematic parsing and BOM merge.", "Phase 4 adds IPC-2581 board/stack parsing.", "Phase 5 adds PDF-to-PNG rendering.",
             "WARNING: tools/kicad-export.py not found in this repository snapshot; schematic shape uses a compatibility-oriented best effort.",
@@ -3452,9 +3829,9 @@ def cleanup_bom_schema(bom: dict[str, Any]) -> dict[str, Any]:
         if "aerospace_hi_rel" in item:
             del item["aerospace_hi_rel"]
         
-        # 2. Remove vendor/vendor_pn/package from fields
+        # 2. Remove empty procurement fields from fields
         fields = item.get("fields", {})
-        for key in ["vendor", "vendor_pn", "package"]:
+        for key in ["vendor", "vendor_pn"]:
             if key in fields:
                 del fields[key]
         
@@ -3495,18 +3872,43 @@ def main() -> int:
     bom = parse_bom(project_name, project_root, files)
     pads = parse_pads(project_root, files, bom)
     ipc = parse_ipc2581(project_root, files)
+    odb = parse_odbpp(project_root, files)
+    if odb.get("source_format") == "odb++":
+        board_source = odb
+        board_source["used_odb_preferred_over_ipc"] = bool(ipc.get("source_file"))
+        board_source["ipc_fallback_reason"] = None
+    else:
+        board_source = ipc
+        board_source["source_format"] = board_source.get("source_format") or "ipc2581"
+        board_source["used_odb_preferred_over_ipc"] = False
+        board_source["ipc_fallback_reason"] = (
+            "No valid ODB++ candidate discovered."
+            if not odb.get("source_file")
+            else "; ".join(e.get("message", "") for e in odb.get("errors", [])) or "ODB++ candidate was invalid."
+        )
 
-    # Cross-extraction pipeline: merge datasets to eliminate nulls
-    cross_extraction = cross_extract_and_enrich(bom, pads, ipc)
+    # Cross-extraction pipeline: use IPC for schematic parity when present
+    # because the current ODB++ net table has net names but not pin nodes.
+    cross_source = ipc if ipc.get("source_file") else board_source
+    cross_extraction = cross_extract_and_enrich(bom, pads, cross_source)
     top_warnings.extend(cross_extraction.get("warnings", []))
 
     sch = build_schematic_export(project_name, project_root, pads, cross_extraction)
-    brd = build_board_export(project_name, project_root, ipc, cross_extraction, schematic_components=sch.get("components", []))
-    stack = build_stack_export(project_name, project_root, ipc)
+    brd = build_board_export(project_name, project_root, board_source, cross_extraction, schematic_components=sch.get("components", []))
+    stack = build_stack_export(project_name, project_root, board_source)
     if not args.dry_run:
         output_root.mkdir(parents=True, exist_ok=True)
     images = render_pdf_images(args, project_root, output_root, project_name, files)
-    report = build_report(args, project_root, output_root, project_name, files, top_warnings, bom, pads, ipc, images)
+    report = build_report(args, project_root, output_root, project_name, files, top_warnings, bom, pads, board_source, images)
+    report["odbpp"] = {
+        "source_file": odb.get("source_file"),
+        "source_format": odb.get("source_format"),
+        "parse_warnings": odb.get("warnings", []),
+        "errors": odb.get("errors", []),
+        "component_count": odb.get("extraction_counts", {}).get("board_component_count", 0),
+        "layer_count": odb.get("extraction_counts", {}).get("layer_count", 0),
+        "route_segment_count": odb.get("extraction_counts", {}).get("route_segment_count", 0),
+    }
 
     report_json = output_root / f"{project_name}-conversion-report.json"
     report_md = output_root / f"{project_name}-conversion-report.md"
