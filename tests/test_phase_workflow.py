@@ -321,6 +321,35 @@ def test_default_phase_prompt_omits_engineering_assessment_mode(tmp_path: Path) 
     assert "blocked_verification_candidate" not in prompt
 
 
+def test_phase4_prompt_uses_resolved_project_input_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_module(ROOT / "scripts" / "write_phase_prompt.py")
+    project = tmp_path / "TestProject"
+    project.mkdir()
+    (project / "babel_bom.csv").write_text("Designator,Value\nU1,MCU\n", encoding="utf-8")
+    (tmp_path / "input").mkdir()
+    out = tmp_path / "phase04_prompt.md"
+
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "write_phase_prompt.py",
+            "--project",
+            "TestProject",
+            "--phase",
+            "4",
+            "--out",
+            str(out),
+        ],
+    )
+
+    assert module.main() == 0
+    prompt = out.read_text(encoding="utf-8")
+    assert "python3 tools/run_converter_pipeline.py TestProject --project-name TestProject --clean" in prompt
+    assert "python3 tools/run_converter_pipeline.py input --project-name TestProject --clean" not in prompt
+
+
 def test_strict_profile_omits_engineering_assessment_mode(tmp_path: Path) -> None:
     prompt = write_phase_prompt(tmp_path, 18, "strict")
 

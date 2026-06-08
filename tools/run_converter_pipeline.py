@@ -13,6 +13,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from converter_input_root import display_path, resolve_converter_input_root
+
 
 def run(cmd: list[str], cwd: Path) -> None:
     print("+", " ".join(cmd))
@@ -30,7 +32,8 @@ def main() -> None:
     repo = Path(__file__).resolve().parents[1]
     converter_repo = repo / "converter" / "ipc2581_to_json"
     converter = converter_repo / "thomson_bundle_converter.py"
-    input_root = Path(args.input_root).resolve()
+    selection = resolve_converter_input_root(repo, args.project_name, args.input_root)
+    input_root = selection.selected_input_root
     exports = repo / "exports"
 
     if not converter.exists():
@@ -38,6 +41,11 @@ def main() -> None:
 
     if not input_root.exists():
         raise SystemExit(f"Input root not found: {input_root}")
+
+    print("Selected converter input root:", display_path(input_root, repo))
+    print("Input root selection reason:", selection.input_root_selection_reason)
+    if not selection.has_usable_candidates:
+        print("WARNING: selected input root has no usable design-source candidates.")
 
     if args.clean and exports.exists():
         shutil.rmtree(exports)

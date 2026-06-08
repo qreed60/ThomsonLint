@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from converter_input_root import display_path, resolve_converter_input_root  # noqa: E402
 
 
 PHASES = {
@@ -110,6 +115,10 @@ def main() -> int:
     phase_name = PHASES[args.phase]
     project = args.project
     assessment_profile = assessment_profile_from_env()
+    phase4_input_root = display_path(
+        resolve_converter_input_root(ROOT, project, "input").selected_input_root,
+        ROOT,
+    )
 
     prompt = f"""You are working in the ThomsonLint repository.
 
@@ -320,7 +329,7 @@ This phase runs the integrated converter to generate review artifacts.
 
 REQUIRED COMMAND:
 ```
-python3 tools/run_converter_pipeline.py input --project-name {project} --clean
+python3 tools/run_converter_pipeline.py {phase4_input_root} --project-name {project} --clean
 ```
 
 After running the converter, verify:

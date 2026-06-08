@@ -195,6 +195,16 @@ def planned_outputs(project_name: str, output_root: Path) -> list[str]:
     ]]
 
 
+def report_path(path: str | Path | None) -> str | None:
+    if path is None:
+        return None
+    p = Path(path)
+    try:
+        return p.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", s.lower())
 
@@ -3705,6 +3715,24 @@ def build_report(args: argparse.Namespace, project_root: Path, output_root: Path
     counts: dict[str, int] = {}
     for f in files:
         counts[f.category] = counts.get(f.category, 0) + 1
+    bom_candidates = sorted(f.relative_path for f in files if f.category == "bom_csv_candidate")
+    board_candidates = sorted(
+        f.relative_path
+        for f in files
+        if f.category in {"pads_ascii_candidate", "ipc2581_candidate", "odbpp_candidate", "stackup_candidate"}
+    )
+    pdf_candidates = sorted(
+        f.relative_path
+        for f in files
+        if f.category in {"schematic_pdf_candidate", "layout_pdf_candidate"}
+    )
+    usable_candidate_count = len(bom_candidates) + len(board_candidates) + len(pdf_candidates)
+    selected_input_root = report_path(project_root)
+    input_root_selection_reason = (
+        f"selected {selected_input_root}: discovered {usable_candidate_count} usable design-source candidate(s)"
+        if usable_candidate_count
+        else f"selected {selected_input_root}: no usable design-source candidates discovered"
+    )
     routing_topology = ipc.get("routing_topology_summary", {})
     trace_width_by_net = routing_topology.get("trace_width_by_net", ipc.get("trace_width_by_net", []))
     trace_width_usage_by_layer = routing_topology.get("trace_width_usage_by_layer", ipc.get("trace_width_usage_by_layer", []))
@@ -3729,14 +3757,20 @@ def build_report(args: argparse.Namespace, project_root: Path, output_root: Path
             "project_root": str(project_root), "project_name": project_name, "output_root": str(output_root), "args": vars(args), "phase": "phase6_integrated_validation",
         },
         "discovery": {"files": [f.__dict__ for f in files], "counts_by_category": counts},
-        "selected_bom_path": bom.get("source_path") or bom.get("source_file"),
+        "selected_input_root": selected_input_root,
+        "input_root_selection_reason": input_root_selection_reason,
+        "input_root_has_usable_candidates": bool(usable_candidate_count),
+        "discovered_bom_candidates": bom_candidates,
+        "discovered_board_candidates": board_candidates,
+        "discovered_pdf_candidates": pdf_candidates,
+        "selected_bom_path": report_path(bom.get("source_path")) or bom.get("source_file"),
         "bom_source_format": bom.get("source_format"),
         "bom_parsed_row_count": bom.get("row_count", 0),
         "bom_expanded_component_count": bom.get("expanded_refdes_count", 0),
         "bom_quantity_mismatch_warnings": [w for w in bom.get("warnings", []) if w.get("code") == "WARN_BOM_QUANTITY_REFDES_COUNT_MISMATCH"],
-        "selected_board_path": ipc.get("source_path") or ipc.get("source_file"),
+        "selected_board_path": report_path(ipc.get("source_path")) or ipc.get("source_file"),
         "board_source_format": ipc.get("source_format") or "ipc2581",
-        "board_source_path": ipc.get("source_path") or ipc.get("source_file"),
+        "board_source_path": report_path(ipc.get("source_path")) or ipc.get("source_file"),
         "used_odb_preferred_over_ipc": bool(ipc.get("used_odb_preferred_over_ipc")),
         "ipc_fallback_reason": ipc.get("ipc_fallback_reason"),
         "extraction_warnings": ipc.get("extraction_warnings", []),

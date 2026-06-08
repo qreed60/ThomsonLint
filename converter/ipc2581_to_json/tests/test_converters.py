@@ -1111,6 +1111,45 @@ def test_bundle_converter_discovers_space_named_odb_archive_and_prefers_over_ipc
     assert report["ipc_fallback_reason"] is None
 
 
+def test_bundle_converter_reports_selected_testproject_input_root(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "TestProject"
+    proj.mkdir()
+    odb_dir = tmp_path / "odb-src"
+    _build_odb_fixture(odb_dir)
+    _write_odb_tgz(odb_dir, proj / "Babel Fish.tgz")
+    (proj / "babel_bom.csv").write_text(ALTIUM_GROUPED_BOM)
+    (proj / "babel_ipc.xml").write_text(XML)
+    out = tmp_path / "out"
+
+    r = run(
+        [
+            "python3",
+            str(root / "thomson_bundle_converter.py"),
+            "TestProject",
+            "--project-name",
+            "TestProject",
+            "--output-root",
+            str(out),
+            "--pretty",
+        ],
+        tmp_path,
+    )
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "TestProject-conversion-report.json").read_text())
+    assert report["selected_input_root"] == "TestProject"
+    assert report["input_root_has_usable_candidates"] is True
+    assert report["discovered_bom_candidates"] == ["babel_bom.csv"]
+    assert "Babel Fish.tgz" in report["discovered_board_candidates"]
+    assert "babel_ipc.xml" in report["discovered_board_candidates"]
+    assert report["discovered_pdf_candidates"] == []
+    assert report["selected_bom_path"] == "TestProject/babel_bom.csv"
+    assert report["selected_board_path"] == "TestProject/Babel Fish.tgz"
+    assert report["bom_source_format"] == "altium_grouped_bom"
+    assert report["board_source_format"] == "odb++"
+    assert report["used_odb_preferred_over_ipc"] is True
+
+
 def test_bundle_converter_uses_ipc_fallback_when_odb_archive_invalid(tmp_path):
     root = Path(__file__).resolve().parents[1]
     proj = tmp_path / "proj"
