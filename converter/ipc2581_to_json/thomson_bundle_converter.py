@@ -191,7 +191,7 @@ def classify_odbpp_directory(path: Path, root: Path) -> ClassifiedFile | None:
 def planned_outputs(project_name: str, output_root: Path) -> list[str]:
     return [str(output_root / f"{project_name}-{n}") for n in [
         "thomson-export-sch.json", "thomson-export-brd.json", "thomson-export-stack.json",
-        "bom.json", "conversion-report.json", "conversion-report.md"
+        "bom.json", "thomson-export-bom.json", "conversion-report.json", "conversion-report.md"
     ]]
 
 
@@ -207,6 +207,12 @@ def report_path(path: str | Path | None) -> str | None:
 
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", s.lower())
+
+
+def _norm_footprint_for_conflict(value: str) -> str:
+    text = value.strip().lower()
+    text = re.sub(r"_\d+$", "", text)
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 HEADER_MAP = {
@@ -706,7 +712,7 @@ def parse_pads(project_root: Path, files: list[ClassifiedFile], bom: dict[str, A
                 value_mismatch += 1
                 warnings.append({"code": "WARN_COMPONENT_VALUE_MISMATCH", "message": f"Value mismatch for {refdes}."})
             bfp = b.get("footprint") or b.get("package")
-            if comp.get("footprint") and bfp and comp["footprint"] != bfp:
+            if comp.get("footprint") and bfp and _norm_footprint_for_conflict(comp["footprint"]) != _norm_footprint_for_conflict(bfp):
                 footprint_mismatch += 1
                 warnings.append({"code": "WARN_COMPONENT_FOOTPRINT_MISMATCH", "message": f"Footprint mismatch for {refdes}."})
         else:
@@ -819,6 +825,8 @@ def cross_extract_and_enrich(bom: dict[str, Any], pads: dict[str, Any], ipc: dic
     Returns a summary dict of enrichment actions taken.
     """
     warnings: list[dict[str, Any]] = []
+    board_format = ipc.get("primary_board_source_format") or ipc.get("source_format") or "ipc2581"
+    board_label = "ODB++" if board_format == "odb++" else "IPC-2581"
     enrichment_stats = {
         "placement_back_annotations": 0,
         "metadata_gap_fills": 0,
@@ -865,7 +873,7 @@ def cross_extract_and_enrich(bom: dict[str, Any], pads: dict[str, Any], ipc: dic
                 pads_comp["y_loc"] = ipc_y
                 pads_comp["rotation"] = ipc_rot
                 pads_comp["placement_layer"] = ipc_layer
-                pads_comp["placement_source"] = "ipc2581"
+                pads_comp["placement_source"] = board_format
                 enrichment_stats["placement_back_annotations"] += 1
 
             # Back-annotate into BOM item
@@ -878,7 +886,7 @@ def cross_extract_and_enrich(bom: dict[str, Any], pads: dict[str, Any], ipc: dic
                     "y_loc": ipc_y,
                     "rotation": ipc_rot,
                     "placement_layer": ipc_layer,
-                    "placement_source": "ipc2581",
+                    "placement_source": board_format,
                 }
 
     # --- 2. Metadata Gap Filling ---
@@ -894,7 +902,7 @@ def cross_extract_and_enrich(bom: dict[str, Any], pads: dict[str, Any], ipc: dic
             bom_fp = (bom_item.get("fields", {}).get("footprint") or bom_item.get("fields", {}).get("package")) if bom_item else None
             if ipc_fp:
                 pads_comp["footprint"] = ipc_fp
-                overrides.append("footprint:ipc2581")
+                overrides.append(f"footprint:{board_format}")
                 enrichment_stats["metadata_gap_fills"] += 1
             elif bom_fp:
                 pads_comp["footprint"] = bom_fp
@@ -907,7 +915,7 @@ def cross_extract_and_enrich(bom: dict[str, Any], pads: dict[str, Any], ipc: dic
             bom_val = bom_item.get("fields", {}).get("value") if bom_item else None
             if ipc_val:
                 pads_comp["value"] = ipc_val
-                overrides.append("value:ipc2581")
+                overrides.append(f"value:{board_format}")
                 enrichment_stats["metadata_gap_fills"] += 1
             elif bom_val:
                 pads_comp["value"] = bom_val
@@ -921,7 +929,7 @@ def cross_extract_and_enrich(bom: dict[str, Any], pads: dict[str, Any], ipc: dic
             bom_pn = bom_item.get("fields", {}).get("mpn") if bom_item else None
             if ipc_pn:
                 pads_comp["part_number"] = ipc_pn
-                overrides.append("part_number:ipc2581")
+                overrides.append(f"part_number:{board_format}")
                 enrichment_stats["metadata_gap_fills"] += 1
             elif bom_pn:
                 pads_comp["part_number"] = bom_pn
@@ -945,13 +953,12 @@ def cross_extract_and_enrich(bom: dict[str, Any], pads: dict[str, Any], ipc: dic
         if fp_pads:
             sources["pads"] = fp_pads
         if fp_ipc:
-            sources["ipc2581"] = fp_ipc
+            sources[board_format] = fp_ipc
         if fp_bom:
             sources["bom"] = fp_bom
 
         if len(sources) >= 2:
-            # Normalize for comparison (case-insensitive, strip whitespace)
-            normalized = {k: re.sub(r"[^a-z0-9]+", "", v.lower()) for k, v in sources.items()}
+            normalized = {k: _norm_footprint_for_conflict(v) for k, v in sources.items()}
             unique_values = set(normalized.values())
             if len(unique_values) > 1:
                 refdes_display = pads_comp.get("refdes", ref_upper)
@@ -964,53 +971,60 @@ def cross_extract_and_enrich(bom: dict[str, Any], pads: dict[str, Any], ipc: dic
                 enrichment_stats["footprint_conflicts"] += 1
 
     # --- 4. Netlist Parity Check ---
-    # Cross-check nets from PADS against LogicalNet list from IPC-2581
+    # Cross-check nets from PADS against the selected primary board source.
     pads_nets = {n.get("name"): n for n in pads.get("nets", []) if n.get("name")}
     ipc_nets = {n.get("name"): n for n in ipc.get("nets", []) if n.get("name")}
+    board_net_model_complete = board_format == "ipc2581" or any(n.get("nodes") for n in ipc_nets.values())
 
-    # Case-insensitive comparison
-    pads_net_names_upper = {name.upper(): name for name in pads_nets}
-    ipc_net_names_upper = {name.upper(): name for name in ipc_nets}
+    if board_format == "odb++" and pads_nets and ipc_nets and not board_net_model_complete:
+        warnings.append({
+            "code": "WARN_NETLIST_PARITY_LIMITED",
+            "message": "PADS-vs-ODB++ netlist parity skipped because the ODB++ net model has net names but no pin nodes.",
+        })
+    else:
+        # Case-insensitive comparison
+        pads_net_names_upper = {name.upper(): name for name in pads_nets}
+        ipc_net_names_upper = {name.upper(): name for name in ipc_nets}
 
-    pads_only = set(pads_net_names_upper.keys()) - set(ipc_net_names_upper.keys())
-    ipc_only = set(ipc_net_names_upper.keys()) - set(pads_net_names_upper.keys())
-    common = set(pads_net_names_upper.keys()) & set(ipc_net_names_upper.keys())
+        pads_only = set(pads_net_names_upper.keys()) - set(ipc_net_names_upper.keys())
+        ipc_only = set(ipc_net_names_upper.keys()) - set(pads_net_names_upper.keys())
+        common = set(pads_net_names_upper.keys()) & set(ipc_net_names_upper.keys())
 
-    for net_upper in pads_only:
-        original_name = pads_net_names_upper[net_upper]
-        # Filter: Skip CAD-generated dummy unused nets
-        if not str(original_name).upper().startswith("UNUSED"):
-            warnings.append({
-                "code": "WARN_NETLIST_PARITY_MISMATCH",
-                "message": f"Net '{original_name}' exists in PADS but not in IPC-2581.",
-            })
-            enrichment_stats["netlist_parity_mismatches"] += 1
-
-    for net_upper in ipc_only:
-        original_name = ipc_net_names_upper[net_upper]
-        # Filter: Skip CAD-generated dummy unused nets
-        if not str(original_name).upper().startswith("UNUSED"):
-            warnings.append({
-                "code": "WARN_NETLIST_PARITY_MISMATCH",
-                "message": f"Net '{original_name}' exists in IPC-2581 but not in PADS.",
-            })
-            enrichment_stats["netlist_parity_mismatches"] += 1
-
-    # Pin count comparison for common nets
-    for net_upper in common:
-        pads_net = pads_nets[pads_net_names_upper[net_upper]]
-        ipc_net = ipc_nets[ipc_net_names_upper[net_upper]]
-        pads_pin_count = pads_net.get("node_count", len(pads_net.get("nodes", [])))
-        ipc_pin_count = ipc_net.get("node_count", len(ipc_net.get("nodes", [])))
-        if pads_pin_count != ipc_pin_count:
+        for net_upper in pads_only:
             original_name = pads_net_names_upper[net_upper]
             # Filter: Skip CAD-generated dummy unused nets
             if not str(original_name).upper().startswith("UNUSED"):
                 warnings.append({
                     "code": "WARN_NETLIST_PARITY_MISMATCH",
-                    "message": f"Net '{original_name}' pin count differs: PADS={pads_pin_count}, IPC-2581={ipc_pin_count}.",
+                    "message": f"Net '{original_name}' exists in PADS but not in {board_label}.",
                 })
                 enrichment_stats["netlist_parity_mismatches"] += 1
+
+        for net_upper in ipc_only:
+            original_name = ipc_net_names_upper[net_upper]
+            # Filter: Skip CAD-generated dummy unused nets
+            if not str(original_name).upper().startswith("UNUSED"):
+                warnings.append({
+                    "code": "WARN_NETLIST_PARITY_MISMATCH",
+                    "message": f"Net '{original_name}' exists in {board_label} but not in PADS.",
+                })
+                enrichment_stats["netlist_parity_mismatches"] += 1
+
+        # Pin count comparison for common nets
+        for net_upper in common:
+            pads_net = pads_nets[pads_net_names_upper[net_upper]]
+            ipc_net = ipc_nets[ipc_net_names_upper[net_upper]]
+            pads_pin_count = pads_net.get("node_count", len(pads_net.get("nodes", [])))
+            ipc_pin_count = ipc_net.get("node_count", len(ipc_net.get("nodes", [])))
+            if pads_pin_count != ipc_pin_count:
+                original_name = pads_net_names_upper[net_upper]
+                # Filter: Skip CAD-generated dummy unused nets
+                if not str(original_name).upper().startswith("UNUSED"):
+                    warnings.append({
+                        "code": "WARN_NETLIST_PARITY_MISMATCH",
+                        "message": f"Net '{original_name}' pin count differs: PADS={pads_pin_count}, {board_label}={ipc_pin_count}.",
+                    })
+                    enrichment_stats["netlist_parity_mismatches"] += 1
 
     # --- 5. BOM Back-Annotation ---
     # Back-annotate resolved value and footprint from PADS components into BOM items
@@ -2868,7 +2882,7 @@ def parse_ipc2581(project_root: Path, files: list[ClassifiedFile]) -> dict[str, 
     if not cands:
         warnings.append({"code": "WARN_IPC_MISSING", "message": "No IPC-2581 candidate discovered."})
         empty_counts={"board_component_count":0,"placement_count":0,"board_net_count":0,"layer_count":0,"stackup_layer_count":0,"via_count":0,"drill_count":0,"route_segment_count":0,"outline_point_count":0}
-        return {"source_file":None,"parser_version":IPC_PARSER_VERSION,"ipc_root":None,"ipc_revision":None,"namespace":None,"units":None,"components":[],"nets":[],"pin_to_net_map":{},"layers":[],"stackup_layers":[],"outline":[],"vias":[],"drills":[],"route_segments":[],"analysis":{},"warnings":warnings,"extraction_counts":empty_counts}
+        return {"source_file":None,"source_path":None,"source_format":None,"parser_version":IPC_PARSER_VERSION,"ipc_root":None,"ipc_revision":None,"namespace":None,"units":None,"components":[],"nets":[],"pin_to_net_map":{},"layers":[],"stackup_layers":[],"outline":[],"vias":[],"drills":[],"route_segments":[],"analysis":{},"warnings":warnings,"errors":[],"extraction_counts":empty_counts}
     src=cands[0]
     # OMIT: WARN_IPC_MULTIPLE_CANDIDATES - file discovery diagnostic, not actionable
     # if len(cands)>1:
@@ -2878,7 +2892,7 @@ def parse_ipc2581(project_root: Path, files: list[ClassifiedFile]) -> dict[str, 
         root=ET.parse(path).getroot()
     except Exception as exc:
         warnings.append({"code":"WARN_IPC_PARSE_FAILED","message":"IPC XML parse failed."})
-        return {"source_file":src.relative_path,"parser_version":IPC_PARSER_VERSION,"ipc_root":None,"ipc_revision":None,"namespace":None,"units":None,"components":[],"nets":[],"pin_to_net_map":{},"layers":[],"stackup_layers":[],"outline":[],"vias":[],"drills":[],"route_segments":[],"analysis":{},"warnings":warnings,"extraction_counts":{"board_component_count":0,"placement_count":0,"board_net_count":0,"layer_count":0,"stackup_layer_count":0,"via_count":0,"drill_count":0,"route_segment_count":0,"outline_point_count":0},"error":str(exc)}
+        return {"source_file":src.relative_path,"source_path":str(path),"source_format":None,"parser_version":IPC_PARSER_VERSION,"ipc_root":None,"ipc_revision":None,"namespace":None,"units":None,"components":[],"nets":[],"pin_to_net_map":{},"layers":[],"stackup_layers":[],"outline":[],"vias":[],"drills":[],"route_segments":[],"analysis":{},"warnings":warnings,"errors":[{"code":"ERR_IPC_PARSE_FAILED","message":f"IPC XML parse failed: {src.relative_path}: {exc}"}],"extraction_counts":{"board_component_count":0,"placement_count":0,"board_net_count":0,"layer_count":0,"stackup_layer_count":0,"via_count":0,"drill_count":0,"route_segment_count":0,"outline_point_count":0},"error":str(exc)}
 
     ns = root.tag.split('}')[0].strip('{') if root.tag.startswith('{') else None
     ipc_root=_local(root.tag)
@@ -3201,7 +3215,7 @@ def parse_ipc2581(project_root: Path, files: list[ClassifiedFile]) -> dict[str, 
         "chassis_ground": npth_keepout_analysis,
     }
 
-    return {"source_file":src.relative_path,"parser_version":IPC_PARSER_VERSION,"ipc_root":ipc_root,"ipc_revision":rev,"namespace":ns,"units":units,"components":components,"nets":nets,"physical_nets":physical_nets,"pin_to_net_map":pin_to_net_map,"layers":layers,"stackup_layers":stack,"stackup_data_quality":stackup_data_quality,"outline":outline,"vias":vias,"drills":drills,"holes":holes,"via_holes":via_holes,"plated_holes":plated_holes,"nonplated_holes":nonplated_holes,"drill_hole_summary":drill_hole_summary,"package_geometry_summary":package_geometry_summary,"package_land_patterns":package_land_patterns,"route_segments":routes,"analysis":analysis,"warnings":warnings,"extraction_counts":counts,"kb_driven_analysis":kb_driven_analysis,**geometry}
+    return {"source_file":src.relative_path,"source_path":str(path),"source_format":"ipc2581","parser_version":IPC_PARSER_VERSION,"ipc_root":ipc_root,"ipc_revision":rev,"namespace":ns,"units":units,"components":components,"nets":nets,"physical_nets":physical_nets,"pin_to_net_map":pin_to_net_map,"layers":layers,"stackup_layers":stack,"stackup_data_quality":stackup_data_quality,"outline":outline,"vias":vias,"drills":drills,"holes":holes,"via_holes":via_holes,"plated_holes":plated_holes,"nonplated_holes":nonplated_holes,"drill_hole_summary":drill_hole_summary,"package_geometry_summary":package_geometry_summary,"package_land_patterns":package_land_patterns,"route_segments":routes,"analysis":analysis,"warnings":warnings,"errors":[],"extraction_counts":counts,"kb_driven_analysis":kb_driven_analysis,**geometry}
 
 
 def _parse_odbpp_matrix_layers(parser: Any) -> list[dict[str, Any]]:
@@ -3480,6 +3494,14 @@ def build_board_export(project_name:str, project_root:Path, ipc:dict[str,Any], c
         "project_name": project_name,
         "board_source_format": source_format,
         "board_source_path": ipc.get("source_path") or ipc.get("source_file"),
+        "board_source_priority": ipc.get("board_source_priority", ["ipc2581", "odb++"]),
+        "primary_board_source_format": ipc.get("primary_board_source_format") or source_format,
+        "primary_board_source_path": ipc.get("primary_board_source_path") or ipc.get("source_path") or ipc.get("source_file"),
+        "supplemental_board_source_format": ipc.get("supplemental_board_source_format"),
+        "supplemental_board_source_path": ipc.get("supplemental_board_source_path"),
+        "odb_supplemental_fields_used": ipc.get("odb_supplemental_fields_used", []),
+        "odb_fallback_used": bool(ipc.get("odb_fallback_used")),
+        "ipc_fallback_reason": ipc.get("ipc_fallback_reason"),
         "source": {"project_root": str(project_root), "layout_file": ipc.get("source_file"), "format": source_format, "ipc_root": ipc.get("ipc_root"), "ipc_revision": ipc.get("ipc_revision"), "namespace": ipc.get("namespace"), "units": ipc.get("units"), "odb_version": ipc.get("odb_version")},
         "units": ipc.get("units"),
         "parser_version": ipc.get("parser_version"),
@@ -3666,7 +3688,9 @@ def validate_outputs(project_root: Path, output_root: Path, project_name: str, f
 
     cats={f.category for f in files}
     expected=[]
-    if "bom_csv_candidate" in cats: expected.append(output_root / f"{project_name}-bom.json")
+    if "bom_csv_candidate" in cats:
+        expected.append(output_root / f"{project_name}-bom.json")
+        expected.append(output_root / f"{project_name}-thomson-export-bom.json")
     if "pads_ascii_candidate" in cats: expected.append(output_root / f"{project_name}-thomson-export-sch.json")
     if "ipc2581_candidate" in cats or "odbpp_candidate" in cats:
         expected.append(output_root / f"{project_name}-thomson-export-brd.json")
@@ -3768,10 +3792,16 @@ def build_report(args: argparse.Namespace, project_root: Path, output_root: Path
         "bom_parsed_row_count": bom.get("row_count", 0),
         "bom_expanded_component_count": bom.get("expanded_refdes_count", 0),
         "bom_quantity_mismatch_warnings": [w for w in bom.get("warnings", []) if w.get("code") == "WARN_BOM_QUANTITY_REFDES_COUNT_MISMATCH"],
-        "selected_board_path": report_path(ipc.get("source_path")) or ipc.get("source_file"),
-        "board_source_format": ipc.get("source_format") or "ipc2581",
-        "board_source_path": report_path(ipc.get("source_path")) or ipc.get("source_file"),
-        "used_odb_preferred_over_ipc": bool(ipc.get("used_odb_preferred_over_ipc")),
+        "selected_board_path": report_path(ipc.get("primary_board_source_path") or ipc.get("source_path")) or ipc.get("source_file"),
+        "board_source_priority": ipc.get("board_source_priority", ["ipc2581", "odb++"]),
+        "primary_board_source_format": ipc.get("primary_board_source_format") or ipc.get("source_format") or "ipc2581",
+        "primary_board_source_path": report_path(ipc.get("primary_board_source_path") or ipc.get("source_path")) or ipc.get("source_file"),
+        "board_source_format": ipc.get("primary_board_source_format") or ipc.get("source_format") or "ipc2581",
+        "board_source_path": report_path(ipc.get("primary_board_source_path") or ipc.get("source_path")) or ipc.get("source_file"),
+        "supplemental_board_source_format": ipc.get("supplemental_board_source_format"),
+        "supplemental_board_source_path": report_path(ipc.get("supplemental_board_source_path")),
+        "odb_supplemental_fields_used": ipc.get("odb_supplemental_fields_used", []),
+        "odb_fallback_used": bool(ipc.get("odb_fallback_used")),
         "ipc_fallback_reason": ipc.get("ipc_fallback_reason"),
         "extraction_warnings": ipc.get("extraction_warnings", []),
         "bom": {
@@ -3779,6 +3809,7 @@ def build_report(args: argparse.Namespace, project_root: Path, output_root: Path
             "row_count": bom.get("row_count", 0), "expanded_refdes_count": bom.get("expanded_refdes_count", 0),
             "duplicate_refdes_count": len(bom.get("duplicate_refdes", [])),
             "parse_warnings": bom.get("warnings", []), "output_file": str(output_root / f"{project_name}-bom.json"),
+            "thomson_export_output_file": str(output_root / f"{project_name}-thomson-export-bom.json"),
             "json_validation": {"status": "skipped" if args.dry_run or args.report_only else "pending"},
         },
         "schematic": {
@@ -3892,6 +3923,82 @@ def cleanup_bom_schema(bom: dict[str, Any]) -> dict[str, Any]:
     return bom
 
 
+def _board_source_is_usable(source: dict[str, Any], source_format: str) -> bool:
+    if source.get("source_format") != source_format:
+        return False
+    if not source.get("source_file"):
+        return False
+    if source.get("errors"):
+        return False
+    counts = source.get("extraction_counts", {})
+    return any(
+        counts.get(key, 0) > 0
+        for key in (
+            "board_component_count",
+            "placement_count",
+            "board_net_count",
+            "layer_count",
+            "route_segment_count",
+            "outline_point_count",
+        )
+    )
+
+
+def _board_source_failure_reason(source: dict[str, Any], label: str) -> str:
+    if not source.get("source_file"):
+        return f"No {label} candidate discovered."
+    messages = [e.get("message", "") for e in source.get("errors", []) if e.get("message")]
+    if messages:
+        return "; ".join(messages)
+    return f"{label} candidate did not yield usable board data."
+
+
+def select_board_source(ipc: dict[str, Any], odb: dict[str, Any]) -> dict[str, Any]:
+    ipc_ok = _board_source_is_usable(ipc, "ipc2581")
+    odb_ok = _board_source_is_usable(odb, "odb++")
+    if ipc_ok:
+        board_source = ipc
+        board_source["board_source_priority"] = ["ipc2581", "odb++"]
+        board_source["primary_board_source_format"] = "ipc2581"
+        board_source["primary_board_source_path"] = board_source.get("source_path") or board_source.get("source_file")
+        board_source["odb_fallback_used"] = False
+        board_source["ipc_fallback_reason"] = None
+        if odb_ok:
+            board_source["supplemental_board_source_format"] = "odb++"
+            board_source["supplemental_board_source_path"] = odb.get("source_path") or odb.get("source_file")
+            board_source["odb_supplemental_fields_used"] = [
+                "routes",
+                "route_length_by_layer",
+                "trace_width_usage_by_layer",
+                "route_length_by_net",
+                "trace_width_by_net",
+                "routing_topology_summary",
+            ]
+        return board_source
+    if odb_ok:
+        board_source = odb
+        board_source["board_source_priority"] = ["ipc2581", "odb++"]
+        board_source["primary_board_source_format"] = "odb++"
+        board_source["primary_board_source_path"] = board_source.get("source_path") or board_source.get("source_file")
+        board_source["supplemental_board_source_format"] = None
+        board_source["supplemental_board_source_path"] = None
+        board_source["odb_supplemental_fields_used"] = []
+        board_source["odb_fallback_used"] = True
+        board_source["ipc_fallback_reason"] = _board_source_failure_reason(ipc, "IPC-2581")
+        return board_source
+    board_source = ipc
+    board_source["source_format"] = board_source.get("source_format") or "ipc2581"
+    board_source["board_source_priority"] = ["ipc2581", "odb++"]
+    board_source["primary_board_source_format"] = "ipc2581"
+    board_source["primary_board_source_path"] = board_source.get("source_path") or board_source.get("source_file")
+    board_source["supplemental_board_source_format"] = None
+    board_source["supplemental_board_source_path"] = None
+    board_source["odb_supplemental_fields_used"] = []
+    board_source["odb_fallback_used"] = False
+    board_source["ipc_fallback_reason"] = None
+    return board_source
+
+
 def main() -> int:
     args = parse_args()
     project_root = Path(args.project_root).resolve()
@@ -3907,24 +4014,9 @@ def main() -> int:
     pads = parse_pads(project_root, files, bom)
     ipc = parse_ipc2581(project_root, files)
     odb = parse_odbpp(project_root, files)
-    if odb.get("source_format") == "odb++":
-        board_source = odb
-        board_source["used_odb_preferred_over_ipc"] = bool(ipc.get("source_file"))
-        board_source["ipc_fallback_reason"] = None
-    else:
-        board_source = ipc
-        board_source["source_format"] = board_source.get("source_format") or "ipc2581"
-        board_source["used_odb_preferred_over_ipc"] = False
-        board_source["ipc_fallback_reason"] = (
-            "No valid ODB++ candidate discovered."
-            if not odb.get("source_file")
-            else "; ".join(e.get("message", "") for e in odb.get("errors", [])) or "ODB++ candidate was invalid."
-        )
+    board_source = select_board_source(ipc, odb)
 
-    # Cross-extraction pipeline: use IPC for schematic parity when present
-    # because the current ODB++ net table has net names but not pin nodes.
-    cross_source = ipc if ipc.get("source_file") else board_source
-    cross_extraction = cross_extract_and_enrich(bom, pads, cross_source)
+    cross_extraction = cross_extract_and_enrich(bom, pads, board_source)
     top_warnings.extend(cross_extraction.get("warnings", []))
 
     sch = build_schematic_export(project_name, project_root, pads, cross_extraction)
@@ -3947,6 +4039,7 @@ def main() -> int:
     report_json = output_root / f"{project_name}-conversion-report.json"
     report_md = output_root / f"{project_name}-conversion-report.md"
     bom_json = output_root / f"{project_name}-bom.json"
+    thomson_bom_json = output_root / f"{project_name}-thomson-export-bom.json"
     sch_json = output_root / f"{project_name}-thomson-export-sch.json"
     brd_json = output_root / f"{project_name}-thomson-export-brd.json"
     stack_json = output_root / f"{project_name}-thomson-export-stack.json"
@@ -3956,6 +4049,7 @@ def main() -> int:
         print(f"[dry-run] - {report_json}")
         print(f"[dry-run] - {report_md}")
         print(f"[dry-run] - {bom_json}")
+        print(f"[dry-run] - {thomson_bom_json}")
         print(f"[dry-run] - {sch_json}")
         print(f"[dry-run] - {brd_json}")
         print(f"[dry-run] - {stack_json}")
@@ -3969,6 +4063,8 @@ def main() -> int:
             
             with bom_json.open("w", encoding="utf-8") as f:
                 json.dump(bom, f, indent=2 if args.pretty else None)
+            with thomson_bom_json.open("w", encoding="utf-8") as f:
+                json.dump(bom, f, indent=2 if args.pretty else None)
             with sch_json.open("w", encoding="utf-8") as f:
                 json.dump(sch, f, indent=2 if args.pretty else None)
             with brd_json.open("w", encoding="utf-8") as f:
@@ -3977,6 +4073,7 @@ def main() -> int:
                 json.dump(stack, f, indent=2 if args.pretty else None)
             try:
                 json.loads(bom_json.read_text(encoding="utf-8"))
+                json.loads(thomson_bom_json.read_text(encoding="utf-8"))
                 report["bom"]["json_validation"] = {"status": "pass"}
             except Exception as exc:
                 report["bom"]["json_validation"] = {"status": "fail", "error": str(exc)}

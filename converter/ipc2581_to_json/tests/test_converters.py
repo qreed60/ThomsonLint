@@ -152,8 +152,11 @@ def test_altium_grouped_bom_parses_expands_and_preserves_alternates(tmp_path):
     assert r.returncode == 0, r.stderr
 
     bom = json.loads((out / "proj-bom.json").read_text())
+    thomson_bom = json.loads((out / "proj-thomson-export-bom.json").read_text())
     report = json.loads((out / "proj-conversion-report.json").read_text())
     assert bom["source_format"] == "altium_grouped_bom"
+    assert thomson_bom["source_format"] == "altium_grouped_bom"
+    assert thomson_bom["components"] == bom["components"]
     assert report["selected_bom_path"].endswith("babel_bom.csv")
     assert report["bom_source_format"] == "altium_grouped_bom"
     assert bom["expanded_refdes_count"] == 7
@@ -1085,7 +1088,7 @@ def test_odbpp_parser_segment_count(tmp_path):
     assert len(parser.route_segments) == 4
 
 
-def test_bundle_converter_discovers_space_named_odb_archive_and_prefers_over_ipc(tmp_path):
+def test_bundle_converter_discovers_space_named_odb_archive_but_keeps_ipc_primary(tmp_path):
     root = Path(__file__).resolve().parents[1]
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -1102,13 +1105,22 @@ def test_bundle_converter_discovers_space_named_odb_archive_and_prefers_over_ipc
     stack = json.loads((out / "proj-thomson-export-stack.json").read_text())
     cats = report["discovery"]["counts_by_category"]
     assert cats["odbpp_candidate"] == 1
-    assert report["selected_board_path"].endswith("Babel Fish.tgz")
-    assert report["board_source_format"] == "odb++"
-    assert report["used_odb_preferred_over_ipc"] is True
-    assert brd["board_source_format"] == "odb++"
-    assert brd["source"]["format"] == "odb++"
-    assert stack["stack_source_format"] == "odb++"
+    assert report["selected_board_path"].endswith("babel_ipc.xml")
+    assert report["board_source_priority"] == ["ipc2581", "odb++"]
+    assert report["primary_board_source_format"] == "ipc2581"
+    assert report["primary_board_source_path"].endswith("babel_ipc.xml")
+    assert report["board_source_format"] == "ipc2581"
+    assert report["supplemental_board_source_format"] == "odb++"
+    assert report["supplemental_board_source_path"].endswith("Babel Fish.tgz")
+    assert report["odb_fallback_used"] is False
+    assert report["odb_supplemental_fields_used"]
+    assert "used_odb_preferred_over_ipc" not in report
+    assert brd["board_source_format"] == "ipc2581"
+    assert brd["source"]["format"] == "ipc2581"
+    assert stack["stack_source_format"] == "ipc2581"
     assert report["ipc_fallback_reason"] is None
+    assert (out / "proj-thomson-export-brd.json").exists()
+    assert not (out / "proj-brd.json").exists()
 
 
 def test_bundle_converter_reports_selected_testproject_input_root(tmp_path):
@@ -1144,13 +1156,17 @@ def test_bundle_converter_reports_selected_testproject_input_root(tmp_path):
     assert "babel_ipc.xml" in report["discovered_board_candidates"]
     assert report["discovered_pdf_candidates"] == []
     assert report["selected_bom_path"] == "TestProject/babel_bom.csv"
-    assert report["selected_board_path"] == "TestProject/Babel Fish.tgz"
+    assert report["selected_board_path"] == "TestProject/babel_ipc.xml"
     assert report["bom_source_format"] == "altium_grouped_bom"
-    assert report["board_source_format"] == "odb++"
-    assert report["used_odb_preferred_over_ipc"] is True
+    assert report["primary_board_source_format"] == "ipc2581"
+    assert report["primary_board_source_path"] == "TestProject/babel_ipc.xml"
+    assert report["supplemental_board_source_format"] == "odb++"
+    assert report["supplemental_board_source_path"] == "TestProject/Babel Fish.tgz"
+    assert report["odb_fallback_used"] is False
+    assert "used_odb_preferred_over_ipc" not in report
 
 
-def test_bundle_converter_uses_ipc_fallback_when_odb_archive_invalid(tmp_path):
+def test_bundle_converter_uses_ipc_primary_when_odb_archive_invalid(tmp_path):
     root = Path(__file__).resolve().parents[1]
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -1167,9 +1183,137 @@ def test_bundle_converter_uses_ipc_fallback_when_odb_archive_invalid(tmp_path):
     brd = json.loads((out / "proj-thomson-export-brd.json").read_text())
     assert report["board_source_format"] == "ipc2581"
     assert report["selected_board_path"].endswith("babel_ipc.xml")
-    assert report["used_odb_preferred_over_ipc"] is False
-    assert report["ipc_fallback_reason"]
+    assert report["odb_fallback_used"] is False
+    assert report["ipc_fallback_reason"] is None
     assert brd["source"]["format"] == "ipc2581"
+
+
+def test_bundle_converter_uses_odb_fallback_when_ipc_invalid(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    odb_dir = tmp_path / "odb-src"
+    _build_odb_fixture(odb_dir)
+    _write_odb_tgz(odb_dir, proj / "Babel Fish.tgz")
+    (proj / "babel_ipc.xml").write_text("<IPC2581>")
+    out = tmp_path / "out"
+
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    brd = json.loads((out / "proj-thomson-export-brd.json").read_text())
+    assert report["primary_board_source_format"] == "odb++"
+    assert report["primary_board_source_path"].endswith("Babel Fish.tgz")
+    assert report["board_source_format"] == "odb++"
+    assert report["odb_fallback_used"] is True
+    assert "IPC XML parse failed" in report["ipc_fallback_reason"]
+    assert brd["source"]["format"] == "odb++"
+
+
+def test_suffix_normalized_footprint_conflict_is_suppressed(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "bom.csv").write_text("Designator,Value,Footprint\nC1,4.7uF,C0402-Med-0.7\n")
+    (proj / "net.asc").write_text(
+        "*PADS-PCB*\n*PART*\nCOMP C1 value=4.7uF footprint=C0402-Med-0.7_6\n*NET*\nNET GND\nC1.1\n"
+    )
+    (proj / "board.xml").write_text(
+        "<IPC2581><Layer name='L1' type='signal'/><Component refdes='C1' packageRef='C0402-Med-0.7'/><Net name='GND'><Pin refdes='C1' pin='1'/></Net></IPC2581>"
+    )
+    out = tmp_path / "out"
+
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    codes = [w["code"] for w in report["warnings"]]
+    assert "WARN_FOOTPRINT_RECONCILIATION_CONFLICT" not in codes
+    assert "WARN_COMPONENT_FOOTPRINT_MISMATCH" not in codes
+
+
+def test_suffix_normalized_footprint_preserves_hyphenated_package_suffix(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "bom.csv").write_text("Designator,Value,Footprint\nU5,DRV,8-SOIC-1\n")
+    (proj / "net.asc").write_text(
+        "*PADS-PCB*\n*PART*\nCOMP U5 value=DRV footprint=8-SOIC-1_1\n*NET*\nNET GND\nU5.1\n"
+    )
+    (proj / "board.xml").write_text(
+        "<IPC2581><Layer name='L1' type='signal'/><Component refdes='U5' packageRef='8-SOIC-1_1'/><Net name='GND'><Pin refdes='U5' pin='1'/></Net></IPC2581>"
+    )
+    out = tmp_path / "out"
+
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    codes = [w["code"] for w in report["warnings"]]
+    assert "WARN_FOOTPRINT_RECONCILIATION_CONFLICT" not in codes
+    assert "WARN_COMPONENT_FOOTPRINT_MISMATCH" not in codes
+
+
+def test_material_footprint_conflict_still_warns(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "bom.csv").write_text("Designator,Value,Footprint\nR1,10k,R0402-Med-0.4\n")
+    (proj / "net.asc").write_text(
+        "*PADS-PCB*\n*PART*\nCOMP R1 value=10k footprint=R0603-Med-0.8\n*NET*\nNET GND\nR1.1\n"
+    )
+    (proj / "board.xml").write_text(
+        "<IPC2581><Layer name='L1' type='signal'/><Component refdes='R1' packageRef='R0402-Med-0.4'/><Net name='GND'><Pin refdes='R1' pin='1'/></Net></IPC2581>"
+    )
+    out = tmp_path / "out"
+
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    codes = [w["code"] for w in report["warnings"]]
+    assert "WARN_FOOTPRINT_RECONCILIATION_CONFLICT" in codes
+    assert "WARN_COMPONENT_FOOTPRINT_MISMATCH" in codes
+
+
+def test_pads_vs_ipc_parity_warning_when_ipc_primary(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "net.asc").write_text(
+        "*PADS-PCB*\n*PART*\nCOMP U1 value=MCU footprint=QFN\n*NET*\nNET EXTRA\nU1.1\n"
+    )
+    (proj / "board.xml").write_text(
+        "<IPC2581><Layer name='L1' type='signal'/><Component refdes='U1'/><Net name='GND'><Pin refdes='U1' pin='1'/></Net></IPC2581>"
+    )
+    out = tmp_path / "out"
+
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    parity = [w for w in report["warnings"] if w["code"] == "WARN_NETLIST_PARITY_MISMATCH"]
+    assert parity
+    assert any("not in IPC-2581" in w["message"] for w in parity)
+    assert all("ODB++" not in w["message"] for w in parity)
+
+
+def test_odb_fallback_parity_limitation_when_net_model_incomplete(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    odb_dir = tmp_path / "odb-src"
+    _build_odb_fixture(odb_dir)
+    _write_odb_tgz(odb_dir, proj / "Babel Fish.tgz")
+    (proj / "net.asc").write_text(
+        "*PADS-PCB*\n*PART*\nCOMP U1 value=MCU footprint=QFN\n*NET*\nNET GND\nU1.1\n"
+    )
+    out = tmp_path / "out"
+
+    r = run(["python3", "thomson_bundle_converter.py", str(proj), "--output-root", str(out), "--pretty"], root)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((out / "proj-conversion-report.json").read_text())
+    assert report["primary_board_source_format"] == "odb++"
+    assert report["odb_fallback_used"] is True
+    codes = [w["code"] for w in report["warnings"]]
+    assert "WARN_NETLIST_PARITY_LIMITED" in codes
+    assert "WARN_NETLIST_PARITY_MISMATCH" not in codes
 
 
 def test_odbpp_parser_net_attribution(tmp_path):
